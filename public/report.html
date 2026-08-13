@@ -190,6 +190,7 @@ function placeThumbs(r) {
         Object.assign(window._report.summary, resp.summary);
         render(window._report);
         placeThumbs(window._report);
+        if (window._previewName === sc.name) preview(sc); // refresh open preview with the new verdict
       }
     });
     track.appendChild(el);
@@ -306,6 +307,7 @@ async function dismiss(i, undo) {
 }
 
 function preview(sc) {
+  window._previewName = sc.name;
   $('preview').style.display = 'block';
   $('divider').style.display = 'block';
   $('pvImg').src = sc.figmaPng;

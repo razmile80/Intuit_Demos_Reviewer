@@ -277,6 +277,7 @@ app.get('/project', (req, res) => {
 
 const upload = multer({ dest: 'runs/uploads/' });
 const channels = new Map(); // runId -> Set<res>
+const activeRuns = new Map(); // runId -> { demoName, startedAt } — survives page reloads
 
 function emit(runId, event, data) {
   for (const res of channels.get(runId) ?? []) {
@@ -304,14 +305,21 @@ app.post('/api/compare', (req, res) => {
   }
   const runId = new Date().toISOString().slice(0, 10) + '-' + crypto.randomBytes(3).toString('hex');
   res.json({ runId });
+  activeRuns.set(runId, { demoName: demoName ?? null, startedAt: Date.now() });
   setTimeout(async () => {
     try {
       const report = await runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress: m => emit(runId, 'progress', m) });
       emit(runId, 'done', report);
     } catch (e) {
       emit(runId, 'fail', { code: e.message, message: friendly(e.message) });
+    } finally {
+      activeRuns.delete(runId);
     }
   }, 300);
+});
+
+app.get('/api/active', (req, res) => {
+  res.json([...activeRuns.entries()].map(([runId, a]) => ({ runId, ...a })));
 });
 
 function friendly(code) {

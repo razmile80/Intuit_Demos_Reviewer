@@ -90,7 +90,7 @@ function loadRuns() {
           <td>${(() => {
             const b = batchState.find(x => x.demoName === r.name);
             if (b && (b.state === 'queued' || b.state === 'running')) return batchChip(r.name);
-            if (activeRescan === r.runId) return '<span class="spin"></span> <span style="color:#888;font-size:12px">scanning…</span>';
+            if (activeRescan === r.runId || activeSolo.some(a => a.demoName === r.name)) return '<span class="spin"></span> <span style="color:#888;font-size:12px">scanning…</span>';
             const btn = `<button class="copy rescan" title="Re-run with the stored Figma + Frame.io links" ${(activeRescan || batchBusy()) ? 'disabled' : ''} onclick="event.stopPropagation(); rescan('${r.runId}')">Rescan</button>`;
             return btn + (b ? ' ' + batchChip(r.name) : '');
           })()}</td>
@@ -206,8 +206,12 @@ async function rescanAll() {
   if (r.skipped?.length) alert('Skipped (missing links): ' + r.skipped.join(', '));
   pollBatch();
 }
+let activeSolo = [];
 async function pollBatch() {
-  batchState = await fetch('/api/batch').then(r => r.json()).catch(() => []);
+  [batchState, activeSolo] = await Promise.all([
+    fetch('/api/batch').then(r => r.json()).catch(() => []),
+    fetch('/api/active').then(r => r.json()).catch(() => []),
+  ]);
   const c = s => batchState.filter(b => b.state === s).length;
   $('batchStatus').textContent = batchState.length
     ? `${c('running')} running · ${c('queued')} queued · ${c('done')} done${c('failed') ? ' · ' + c('failed') + ' failed' : ''}`
@@ -219,7 +223,7 @@ async function pollBatch() {
     `<li style="padding:2px 0">${icon(b.state)} ${esc(b.demoName ?? b.label ?? '')}${b.state === 'failed' && b.error ? ` <span style="color:#f87171">— ${esc(b.error)}</span>` : ''}${b.state === 'done' && b.runId ? ` <a class="ext" href="/report/${b.runId}">report</a>` : ''}</li>`).join('');
   if (batchState.length && $('importPanel').style.display === 'none' && batchBusy()) $('importPanel').style.display = 'block';
   loadRuns();
-  if (batchBusy()) setTimeout(pollBatch, 4000);
+  if (batchBusy() || activeSolo.length) setTimeout(pollBatch, 4000);
 }
 let sortMode = localStorage.getItem('runSort') ?? 'date'; // date (newest first) → nameAsc → nameDesc
 function cycleSort() {
