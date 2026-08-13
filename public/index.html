@@ -1,0 +1,246 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Figma ↔ Video QA</title>
+<style>
+  body { background: #141414; color: #eee; font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 32px; }
+  h1 { font-weight: 600; }
+  input[type=url] { width: min(480px, 90vw); padding: 10px; border-radius: 8px; border: 1px solid #333; background: #1e1e1e; color: #eee; margin-bottom: 12px; }
+  button.go { padding: 10px 24px; border-radius: 8px; border: 0; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer; }
+  button.go:disabled { opacity: 0.5; cursor: wait; }
+  #log { font: 12px ui-monospace, monospace; color: #8a8; white-space: pre-wrap; margin: 16px 0; max-height: 160px; overflow-y: auto; }
+  #fallback { display: none; margin-top: 12px; color: #fbbf24; }
+  table#runs { border-collapse: collapse; width: 100%; margin: 8px 0 24px; font-size: 13px; }
+  #runs th { text-align: left; color: #888; font-weight: 500; padding: 8px 12px; border-bottom: 1px solid #333; }
+  #runs td { padding: 8px 12px; border-bottom: 1px solid #222; }
+  #runs tr.row { cursor: pointer; }
+  #runs tr.row:hover { background: #1c1c1c; }
+  .badge { padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+  .badge.ok { background: #14331f; color: #4ade80; }
+  .badge.bad { background: #3a1717; color: #f87171; }
+  .rename { cursor: pointer; color: #666; margin-left: 6px; }
+  .rename:hover { color: #eee; }
+  a.ext { color: #60a5fa; text-decoration: none; }
+  button.copy { background: none; border: 1px solid #444; color: #ccc; border-radius: 6px; padding: 2px 10px; cursor: pointer; }
+  button.copy:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.rescan { background: #236CFF; border-color: #236CFF; color: #fff; font-weight: 600; }
+  .spin { display: inline-block; width: 13px; height: 13px; border: 2px solid #444; border-top-color: #2563eb; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style></head><body>
+<h1>Figma ↔ Video QA</h1>
+<div>
+  <input type="url" id="figma" placeholder="Figma storyboard link"><br>
+  <input type="url" id="frameio" placeholder="Frame.io or Dropbox video link"><br>
+  <textarea id="script" placeholder="VO script (optional — leave empty to auto-transcribe from the video)" style="width:min(480px,90vw);min-height:64px;padding:10px;border-radius:8px;border:1px solid #333;background:#1e1e1e;color:#eee;margin-bottom:12px;font-family:inherit;font-size:13px"></textarea><br>
+  <button class="go" id="go">Compare</button>
+  <div id="fallback">Stream sniffing failed — upload the mp4 instead: <input type="file" id="mp4" accept="video/mp4,video/quicktime"></div>
+</div>
+<div id="log"></div>
+<h2 id="recentTitle" style="display:none;font-weight:600;font-size:16px;margin-top:32px">Run of show
+  <button class="copy" style="margin-left:12px" onclick="copyProject(this)">Share project</button>
+  <button class="copy rescan" id="rescanAll" style="margin-left:8px" onclick="rescanAll()">Rescan all</button>
+  <button class="copy" id="batchImportBtn" style="margin-left:8px" onclick="$('importPanel').style.display = $('importPanel').style.display === 'none' ? 'block' : 'none'">Batch import</button>
+  <span id="batchStatus" style="color:#888;font-size:13px;font-weight:400;margin-left:12px"></span>
+</h2>
+<div id="importPanel" style="display:none;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:14px;margin-bottom:16px;max-width:900px">
+  <div style="font-size:13px;color:#888;margin-bottom:8px">One demo per line: paste the Figma link and the video link (Frame.io / f.io / Dropbox) on the same line, any order.</div>
+  <textarea id="importText" oninput="parseImport()" placeholder="https://www.figma.com/design/…?node-id=…  https://f.io/AbCd123
+https://www.figma.com/design/…?node-id=…  https://next.frame.io/share/…" style="width:100%;min-height:110px;background:#1e1e1e;color:#eee;border:1px solid #333;border-radius:8px;padding:10px;font:12px ui-monospace,monospace"></textarea>
+  <div style="margin-top:8px;display:flex;align-items:center;gap:12px">
+    <button class="copy rescan" id="importRun" onclick="runImport()" disabled>Run</button>
+    <span id="importInfo" style="font-size:13px;color:#888"></span>
+  </div>
+  <ul id="batchQueue" style="list-style:none;padding:0;margin:12px 0 0;font-size:13px"></ul>
+</div>
+<div id="recent"></div>
+<script>
+const $ = id => document.getElementById(id);
+let uploadedPath = null;
+
+function loadRuns() {
+  fetch('/api/runs').then(r => r.json()).then(all => {
+    if (!all.length) return;
+    // One row per demo: latest run wins (list is sorted newest-first).
+    const seen = new Set();
+    const runs = all.filter(r => { const k = r.name ?? r.runId; if (seen.has(k)) return false; seen.add(k); return true; });
+    $('recentTitle').style.display = 'block';
+    const link = (url, label) => url ? `<a class="ext" href="${url}" target="_blank" onclick="event.stopPropagation()">${label}</a>` : '<span style="color:#555">—</span>';
+    fetch('/api/scripts-status').then(x => x.json()).then(scripts => {
+      document.querySelectorAll('[data-script]').forEach(td => {
+        const s = scripts[td.dataset.script];
+        if (s) td.innerHTML = `<a class="ext" href="${td.dataset.href}#vo">v${s.versions} · ${new Date(s.date).toLocaleDateString()}</a>`;
+      });
+    }).catch(() => {});
+    if (sortMode === 'nameAsc') runs.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true }));
+    if (sortMode === 'nameDesc') runs.sort((a, b) => (b.name ?? '').localeCompare(a.name ?? '', undefined, { numeric: true }));
+    const arrow = sortMode === 'nameAsc' ? ' ↑' : sortMode === 'nameDesc' ? ' ↓' : '';
+    $('recent').innerHTML = `<table id="runs"><tr><th>Nr</th><th>Date</th><th style="cursor:pointer" title="Sort by demo name" onclick="cycleSort()">Demo name${arrow}</th><th>Figma</th><th>Frame.io</th><th>VO script</th><th>Status</th><th>Share</th><th></th></tr>` +
+      runs.map((r, i) => {
+        const s = r.summary ?? {};
+        const ok = (s.mismatch ?? 0) === 0 && (s.missing ?? 0) === 0 && s.orderOk !== false;
+        const date = r.date ? new Date(r.date).toLocaleDateString() : r.runId.slice(0, 10);
+        return `<tr class="row" onclick="location.href='/report/${r.runId}'">
+          <td>${i + 1}</td>
+          <td>${date}</td>
+          <td>${esc(r.name)}<span class="rename" title="Rename" onclick="event.stopPropagation(); renameRun('${r.runId}', this)">✎</span></td>
+          <td>${link(r.figmaUrl, 'Figma')}<span class="rename" title="Edit Figma link" onclick="event.stopPropagation(); editLink('${r.runId}', 'figmaUrl', this)">✎</span></td>
+          <td>${link(r.frameioUrl, 'Video')}<span class="rename" title="Edit Frame.io link" onclick="event.stopPropagation(); editLink('${r.runId}', 'frameioUrl', this)">✎</span></td>
+          <td data-script="${esc(r.name)}" data-href="/report/${r.runId}"><span style="color:#555">—</span></td>
+          <td><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'Match'
+            : [s.mismatch ? s.mismatch + ' mismatch' : '', s.missing ? s.missing + ' missing' : '', s.orderOk === false ? 'order broken' : '']
+              .filter(Boolean).join(' · ') || 'check report'}</span></td>
+          <td><button class="copy" onclick="event.stopPropagation(); copyLink('${r.runId}', this)">Copy link</button></td>
+          <td>${(() => {
+            const b = batchState.find(x => x.demoName === r.name);
+            if (b && (b.state === 'queued' || b.state === 'running')) return batchChip(r.name);
+            if (activeRescan === r.runId) return '<span class="spin"></span> <span style="color:#888;font-size:12px">scanning…</span>';
+            const btn = `<button class="copy rescan" title="Re-run with the stored Figma + Frame.io links" ${(activeRescan || batchBusy()) ? 'disabled' : ''} onclick="event.stopPropagation(); rescan('${r.runId}')">Rescan</button>`;
+            return btn + (b ? ' ' + batchChip(r.name) : '');
+          })()}</td>
+        </tr>` + (activeRescan === r.runId
+          ? `<tr><td colspan="9" style="padding:0 12px 12px"><pre id="rowlog" style="font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;margin:0;max-height:140px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px">${esc(logBuf)}</pre></td></tr>`
+          : '');
+      }).join('') + '</table>';
+  });
+}
+async function copyProject(btn) {
+  await navigator.clipboard.writeText(location.origin + '/project');
+  btn.textContent = 'Link copied ✓';
+  setTimeout(() => btn.textContent = 'Share project', 2000);
+}
+const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+async function editLink(runId, key, el) {
+  const label = key === 'figmaUrl' ? 'Figma storyboard link' : 'Frame.io share link';
+  const current = el.parentElement.querySelector('a')?.href ?? '';
+  const url = prompt(label + ':', current);
+  if (!url || url === current) return;
+  const r = await fetch('/api/report/' + runId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: url }) }).then(r => r.json());
+  if (r.error || (!r.figmaUrl && key === 'figmaUrl')) alert('Link not saved — it must start with http(s)://');
+  loadRuns();
+}
+async function renameRun(runId, el) {
+  const current = el.parentElement.firstChild.textContent;
+  const name = prompt('Demo name:', current);
+  if (!name || name === current) return;
+  await fetch('/api/report/' + runId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+  loadRuns();
+}
+async function copyLink(runId, btn) {
+  await navigator.clipboard.writeText(location.origin + '/report/' + runId);
+  btn.textContent = 'Copied ✓';
+  setTimeout(() => btn.textContent = 'Copy link', 1500);
+}
+pollBatch(); // renders the table and resumes batch-status polling if a batch is mid-flight
+
+
+$('mp4').onchange = async e => {
+  const fd = new FormData(); fd.append('video', e.target.files[0]);
+  const r = await fetch('/api/upload', { method: 'POST', body: fd }).then(r => r.json());
+  uploadedPath = r.videoPath;
+  $('go').click();
+};
+
+$('go').onclick = () => startRun({ figmaUrl: $('figma').value.trim(), frameioUrl: $('frameio').value.trim(), videoPath: uploadedPath, script: $('script').value.trim() || null });
+
+async function startRun(body) {
+  logBuf = '';
+  $('log').textContent = '';
+  $('go').disabled = true;
+  const r = await fetch('/api/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(r => r.json());
+  if (r.error) { logMsg(r.error); $('go').disabled = false; return; }
+  const es = new EventSource('/api/progress/' + r.runId);
+  es.addEventListener('progress', e => logMsg(JSON.parse(e.data)));
+  es.addEventListener('fail', e => {
+    const d = JSON.parse(e.data);
+    if (d.code === 'FRAMEIO_NO_STREAM') $('fallback').style.display = 'block';
+    es.close(); $('go').disabled = false;
+    const wasRescan = activeRescan;
+    activeRescan = null; loadRuns();
+    logMsg('❌ ' + d.message);
+    if (wasRescan) $('log').textContent = logBuf; // surface failure at top after row collapses
+  });
+  es.addEventListener('done', e => {
+    es.close();
+    location.href = '/report/' + JSON.parse(e.data).runId; // scan lands as a table row; open its report
+  });
+}
+
+let activeRescan = null;
+let batchState = [];
+const batchBusy = () => batchState.some(b => b.state === 'queued' || b.state === 'running');
+function batchChip(name) {
+  const b = batchState.find(x => x.demoName === name);
+  if (!b) return null;
+  if (b.state === 'queued') return '<span style="color:#888;font-size:12px">queued</span>';
+  if (b.state === 'running') return '<span class="spin"></span> <span style="color:#888;font-size:12px">scanning…</span>';
+  if (b.state === 'failed') return `<span style="color:#f87171;font-size:12px" title="${esc(b.error ?? '')}">failed ⚠</span>`;
+  return '<span style="color:#4ade80;font-size:12px">done ✓</span>';
+}
+let importPairs = [];
+function parseImport() {
+  importPairs = [];
+  let bad = 0;
+  for (const line of $('importText').value.split('\n')) {
+    if (!line.trim()) continue;
+    // URLs may be pasted with no separator between them (split on the next
+    // "https://") and with or without the https:// prefix (normalize it on).
+    const urls = (line.match(/(?:https?:\/\/)?(?:[\w-]+\.)*(?:figma\.com|frame\.io|f\.io|dropbox\.com)\/(?:(?!https?:\/\/)[^\s,;"'])+/g) ?? [])
+      .map(u => u.startsWith('http') ? u : 'https://' + u);
+    const figma = urls.find(u => u.includes('figma.com'));
+    const video = urls.find(u => /frame\.io|f\.io\/|dropbox\.com/.test(u));
+    if (figma && video) importPairs.push({ figmaUrl: figma, frameioUrl: video });
+    else bad++;
+  }
+  $('importRun').disabled = importPairs.length === 0 || batchBusy();
+  $('importInfo').textContent = importPairs.length
+    ? `${importPairs.length} pair${importPairs.length > 1 ? 's' : ''} ready${bad ? ` · ${bad} line${bad > 1 ? 's' : ''} incomplete` : ''}`
+    : (bad ? `${bad} line${bad > 1 ? 's' : ''} missing a Figma or video link` : '');
+}
+async function runImport() {
+  const r = await fetch('/api/import-batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items: importPairs }) }).then(r => r.json());
+  if (r.error) return alert(r.error);
+  $('importInfo').textContent = `${r.queued} queued — running two at a time. Feel free to close this tab.`;
+  pollBatch();
+}
+async function rescanAll() {
+  if (!confirm('Rescan every demo with stored Figma + video links?')) return;
+  const r = await fetch('/api/rescan-all', { method: 'POST' }).then(r => r.json());
+  if (r.error) return alert(r.error);
+  if (r.skipped?.length) alert('Skipped (missing links): ' + r.skipped.join(', '));
+  pollBatch();
+}
+async function pollBatch() {
+  batchState = await fetch('/api/batch').then(r => r.json()).catch(() => []);
+  const c = s => batchState.filter(b => b.state === s).length;
+  $('batchStatus').textContent = batchState.length
+    ? `${c('running')} running · ${c('queued')} queued · ${c('done')} done${c('failed') ? ' · ' + c('failed') + ' failed' : ''}`
+    : '';
+  $('rescanAll').disabled = batchBusy();
+  $('importRun').disabled = importPairs.length === 0 || batchBusy();
+  const icon = s => s === 'running' ? '<span class="spin"></span>' : s === 'done' ? '<span style="color:#4ade80">✓</span>' : s === 'failed' ? '<span style="color:#f87171">✗</span>' : '<span style="color:#666">•</span>';
+  $('batchQueue').innerHTML = batchState.map(b =>
+    `<li style="padding:2px 0">${icon(b.state)} ${esc(b.demoName ?? b.label ?? '')}${b.state === 'failed' && b.error ? ` <span style="color:#f87171">— ${esc(b.error)}</span>` : ''}${b.state === 'done' && b.runId ? ` <a class="ext" href="/report/${b.runId}">report</a>` : ''}</li>`).join('');
+  if (batchState.length && $('importPanel').style.display === 'none' && batchBusy()) $('importPanel').style.display = 'block';
+  loadRuns();
+  if (batchBusy()) setTimeout(pollBatch, 4000);
+}
+let sortMode = localStorage.getItem('runSort') ?? 'date'; // date (newest first) → nameAsc → nameDesc
+function cycleSort() {
+  sortMode = sortMode === 'date' ? 'nameAsc' : sortMode === 'nameAsc' ? 'nameDesc' : 'date';
+  localStorage.setItem('runSort', sortMode);
+  loadRuns();
+}
+let logBuf = '';
+function logMsg(line) {
+  logBuf += line + '\n';
+  const el = document.getElementById('rowlog') ?? $('log');
+  el.textContent = logBuf;
+  el.scrollTop = 1e9;
+}
+function rescan(runId) {
+  fetch('/api/report/' + runId).then(r => r.json()).then(rep => {
+    if (!rep.figmaUrl || !rep.frameioUrl) return alert('This run has no stored links (older run) — paste them above instead.');
+    activeRescan = runId;
+    loadRuns();
+    startRun({ figmaUrl: rep.figmaUrl, frameioUrl: rep.frameioUrl, demoName: rep.name });
+  });
+}
+
+</script></body></html>

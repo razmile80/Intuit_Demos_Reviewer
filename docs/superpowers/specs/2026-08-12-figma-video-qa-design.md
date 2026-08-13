@@ -32,15 +32,18 @@ Local web app: Node.js server + Playwright, at `http://localhost:3000`. User pas
    - Fallback: if the stream can't be sniffed, UI offers manual .mp4 upload.
 
 3. **Matcher + judge** (`src/compare/`)
-   - **Match:** each Figma screen vs all surviving video frames using pHash + color histogram on the phone-screen region. Top 1–3 candidates per screen go to the judge.
+   - **Match (revised again for desktop/scroll demos):** desktop demos show tall pages through a scrolling viewport, so (a) the judge compares only the visible scroll window against the corresponding Figma region, (b) candidate shortlists are built from a forward time-window (screens follow storyboard order) with similarity ranking only within that window, (c) selection+judging happen in ONE vision call per screen from a mini contact sheet, with full-resolution confirmation only for suspected mismatches or null picks — "not found" and "mismatch" verdicts always get a full-res second opinion.
+   - **Match (revised during implementation):** perceptual hashing proved unable to distinguish same-layout screens that differ only in text (all "white cards on blue"). Pairing: perceptual similarity narrows to the top ~9 candidates per screen, Claude vision picks the true frame from a per-screen **mini contact sheet** (kept small so the API doesn't downscale it), and the judge **self-heals** — on a mismatch verdict it tries remaining candidates and prefers any match, so wrong pairings can't produce false mismatches while genuine content errors (which match no frame) still surface. Video-frame dedupe uses direct pixel-diff (>0.5% changed pixels at 128×128) rather than hashes. Validated on the real GEO Search demo: 14/14 screens correctly matched in order; a doctored screen was correctly flagged with an exact difference description.
+   - **Figma capture (revised):** headless-browser capture is blocked by Figma's CloudFront bot protection and by non-public files; the primary path is the Figma REST API via `FIGMA_TOKEN` (`figma-api.js`) — exact names, true x-order, 2x PNG renders, auto-descent from page links into a single storyboard strip.
    - **Judge:** Claude vision (structured JSON output) per pair: `match | mismatch | not_found` + concrete differences (copy, layout/visual, color). Prompt explicitly instructs to ignore zoom/pan/scale/device chrome — only content inside the phone counts.
    - **Sequence check:** matched frame timestamps must increase in storyboard order; violations flagged.
    - Derived findings: missing screens (Figma screen never matched), extra screens (video frames matching no Figma screen), order violations.
 
 4. **Report UI** (`src/server.js` + `public/`)
-   - Summary strip: ✅ matched / ⚠️ mismatched / ❌ missing / order OK or broken.
-   - One row per Figma screen: Figma image | matched video frame (with timestamp) | verdict + bulleted differences.
-   - Extra video screens listed at the end.
+   - **Filmstrip layout** (matches the team's storyboard reading habit): one column per Figma screen, horizontally scrollable. Top row = Figma screens in storyboard order; bottom row = matched video frame (with timestamp); under each column a verdict word — "Match" (green) / "Mismatch" (red).
+   - Clicking a column expands the pair side-by-side, enlarged, with the judge's bulleted differences.
+   - Missing screen → video slot shows a dashed "Not found" placeholder. Extra video screens append at the end, grayed.
+   - Summary line top-left: "14 screens · 12 match · 1 mismatch · 1 missing · order OK".
    - Saved as standalone `reports/<demo-name>-<date>.html` for sharing.
    - Every run keeps captured images in `runs/<run-id>/` for audit.
 

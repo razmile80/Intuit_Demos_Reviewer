@@ -1,0 +1,290 @@
+<!doctype html><html><head><meta charset="utf-8"><title>QA Report</title>
+<style>
+  body { background: #141414; color: #eee; font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 32px; }
+  h1 { font-weight: 600; font-size: 22px; }
+  #summary { font-size: 22px; font-weight: 600; margin: 16px 0; }
+  #strip { display: flex; gap: 20px; overflow-x: auto; padding-bottom: 16px; }
+  .col { min-width: 190px; text-align: center; cursor: pointer; }
+  .col img { width: 180px; border-radius: 8px; display: block; margin: 0 auto 10px; }
+  .verdict { font-weight: 700; margin-top: 6px; text-transform: capitalize; }
+  .match { color: #4ade80; } .mismatch { color: #f87171; } .not_found, .error { color: #fbbf24; }
+  .ghost { width: 180px; height: 320px; border: 2px dashed #444; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #666; margin: 0 auto 10px; }
+  .meta { font-size: 11px; color: #888; }
+  #detail { display: none; position: sticky; bottom: 0; background: #1c1c1c; border-top: 1px solid #333; padding: 20px; }
+  #detail .imgs { display: flex; gap: 24px; align-items: flex-start; }
+  #detail img { max-height: 480px; border-radius: 8px; }
+  #detail ul { color: #f99; }
+  #dClose { float: right; background: none; border: 0; color: #888; font-size: 20px; cursor: pointer; }
+  .extra { opacity: 0.55; }
+  button.share { padding: 8px 18px; border-radius: 8px; border: 1px solid #444; background: #1e1e1e; color: #eee; cursor: pointer; }
+  .thumb { z-index: 1; }
+  .thumb:hover { z-index: 10; }
+  .dismissBtn { display: none; background: #1e1e1e; border: 1px solid #444; color: #ccc; border-radius: 6px; padding: 2px 10px; font-size: 11px; cursor: pointer; margin-top: 4px; }
+  .col:hover .dismissBtn { display: inline-block; }
+  .dismissed-col { opacity: 0.55; }
+</style></head><body>
+<a href="/" style="color:#888;text-decoration:none;font-size:13px">← Run of show</a>
+<h1>Figma ↔ Video QA report <button class="share" id="share">Copy share link</button></h1>
+<div id="links" style="margin:4px 0 12px"></div>
+<div id="summary">Loading…</div>
+<label id="extrasToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer"><input type="checkbox" id="showExtras" style="vertical-align:-2px"> <span id="extrasLabel">show extras</span></label>
+<div id="strip"></div>
+<div id="detail"><button id="dClose" onclick="this.parentElement.style.display='none'">✕</button><div class="imgs"><img id="dFigma"><img id="dVideo"></div><ul id="dDiffs"></ul></div>
+<div id="reviewer" style="display:none;margin-top:40px">
+  <h2 style="font-weight:600;font-size:18px">Timeline review <span style="color:#888;font-size:13px;font-weight:400">— click a design to preview it; drag it onto the moment it belongs to and I'll re-judge it there</span>
+    <label style="font-size:13px;font-weight:400;color:#ccc;margin-left:16px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="showMatches" checked style="vertical-align:-2px"> show matches</label>
+  </h2>
+  <div style="display:flex;gap:20px;align-items:flex-start">
+    <div style="flex:1;min-width:0">
+      <video id="vid" controls style="width:100%;border-radius:8px;background:#000"></video>
+      <div id="track" style="position:relative;height:92px;margin-top:12px;border-top:1px solid #333">
+        <div id="playhead" style="position:absolute;top:0;width:2px;height:100%;background:#2563eb;pointer-events:none"></div>
+      </div>
+      <div id="rejudgeStatus" style="color:#fbbf24;font-size:13px;min-height:18px"></div>
+    </div>
+    <div id="divider" title="Drag to resize" style="display:none;width:6px;flex-shrink:0;cursor:col-resize;border-radius:3px;background:#2a2a2a;align-self:stretch"></div>
+    <div id="preview" style="width:48%;flex-shrink:0;display:none;position:relative;border-radius:8px">
+      <button onclick="document.getElementById('preview').style.display='none';document.getElementById('divider').style.display='none'"
+        style="position:absolute;top:8px;right:8px;z-index:2;background:rgba(0,0,0,0.55);border:0;color:#fff;font-size:16px;cursor:pointer;border-radius:999px;width:30px;height:30px">✕</button>
+      <button onclick="document.getElementById('pvViewport').requestFullscreen()" title="Full screen"
+        style="position:absolute;top:8px;right:44px;z-index:2;background:rgba(0,0,0,0.55);border:0;color:#fff;font-size:14px;cursor:pointer;border-radius:999px;width:30px;height:30px">⛶</button>
+      <div id="pvViewport" title="Scroll to zoom · drag to pan · double-click to fit"
+        style="width:100%;height:74vh;overflow:hidden;position:relative;background:#111;border-radius:8px;cursor:grab;touch-action:none">
+        <img id="pvImg" draggable="false" style="position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;pointer-events:none">
+      </div>
+      <ul id="pvDiffs" style="color:#f99;font-size:12px;padding-left:18px;margin:10px 0 0"></ul>
+    </div>
+  </div>
+</div>
+<div id="vo" style="margin-top:40px;max-width:900px">
+  <h2 style="font-weight:600;font-size:18px">VO / script <span id="voMeta" style="color:#888;font-size:13px;font-weight:400"></span></h2>
+  <textarea id="voText" placeholder="Paste the latest script here…" style="width:100%;min-height:180px;background:#1e1e1e;color:#eee;border:1px solid #333;border-radius:8px;padding:12px;font-size:14px;line-height:1.5"></textarea><br>
+  <button class="share" id="voSave" style="margin-top:8px">Compare with previous &amp; save</button>
+  <pre id="voChanges" style="display:none;background:#1c1c1c;border:1px solid #333;border-radius:8px;padding:16px;white-space:pre-wrap;font-size:13px;line-height:1.6;color:#ddd"></pre>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+$('share').onclick = async () => {
+  await navigator.clipboard.writeText(location.href);
+  $('share').textContent = 'Link copied ✓';
+  setTimeout(() => $('share').textContent = 'Copy share link', 2000);
+};
+$('showExtras').onchange = () => window._report && render(window._report);
+const runId = location.pathname.split('/').pop();
+fetch('/api/report/' + runId).then(r => r.json()).then(render).catch(() => $('summary').textContent = 'Report not found');
+
+function render(r) {
+  if (r.error) { $('summary').textContent = r.error; return; }
+  const s = r.summary;
+  document.title = 'QA · ' + (r.name ?? r.runId);
+  document.querySelector('h1').firstChild.textContent = (r.name ?? 'Figma ↔ Video QA report') + ' ';
+  const L = [];
+  if (r.figmaUrl) L.push(`<a href="${r.figmaUrl}" target="_blank" style="color:#60a5fa;margin-right:16px">Figma storyboard ↗</a>`);
+  if (r.frameioUrl) L.push(`<a href="${r.frameioUrl}" target="_blank" style="color:#60a5fa;margin-right:16px">Frame.io video ↗</a>`);
+  if (r.date) L.push(`<span style="color:#888">${new Date(r.date).toLocaleString()}</span>`);
+  $('links').innerHTML = L.join('');
+  demoName = r.name ?? r.runId;
+  loadScript();
+  if (r.video) buildTimeline(r);
+  if (r.script?.changes) {
+    $('voChanges').style.display = 'block';
+    $('voChanges').textContent = (r.script.source === 'transcript' ? '[auto-transcribed from video audio]\n\n' : '') + r.script.changes;
+  }
+  $('summary').textContent = `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
+    + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
+  const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
+  $('strip').innerHTML = r.screens.map((sc, i) => `
+    <div class="col ${sc.dismissed ? 'dismissed-col' : ''}" onclick="detail(${i})">
+      <div style="position:relative">${tag('Figma')}<img src="${sc.figmaPng}" loading="lazy"></div>
+      ${sc.videoPng ? `<div style="position:relative">${tag('Video')}<img src="${sc.videoPng}" loading="lazy"></div>` : '<div class="ghost">Not found</div>'}
+      <div class="verdict ${sc.dismissed ? '' : sc.verdict}" ${sc.dismissed ? 'style="color:#888"' : ''}>${sc.dismissed ? 'dismissed' : sc.verdict.replace('_', ' ')}</div>
+      <div class="meta">${sc.name}${sc.timestamp !== null ? ' · ' + sc.timestamp.toFixed(1) + 's' : ''}</div>
+      ${sc.verdict !== 'match' ? `<button class="dismissBtn" onclick="event.stopPropagation(); dismiss(${i}, ${!!sc.dismissed})">${sc.dismissed ? 'Restore' : 'Dismiss'}</button>` : ''}
+    </div>`).join('') + ($('showExtras').checked ? r.extras.map(x => `
+    <div class="col extra"><div class="ghost">no Figma source</div><div style="position:relative">${tag('Video')}<img src="${x.videoPng}" loading="lazy"></div><div class="verdict">extra</div><div class="meta">${x.timestamp.toFixed(1)}s</div></div>`).join('') : '');
+  if (r.extras.length) {
+    $('extrasToggle').style.display = 'inline-block';
+    $('extrasLabel').textContent = `show extras (${r.extras.length} video moments with no matching design)`;
+  }
+  window._report = r;
+}
+
+// ---- Timeline reviewer ----
+const VCOL = { match: '#4ade80', mismatch: '#f87171', not_found: '#fbbf24', error: '#fbbf24' };
+let dur = 60;
+function buildTimeline(r) {
+  $('reviewer').style.display = 'block';
+  $('showMatches').onchange = () => placeThumbs(r);
+  const vid = $('vid');
+  // Re-renders (e.g. after a re-judge) must not reload the video and lose the
+  // playback position — only wire the player up once.
+  if (vid.dataset.loaded) { placeThumbs(r); return; }
+  vid.dataset.loaded = '1';
+  vid.src = r.video;
+  vid.addEventListener('loadedmetadata', () => { dur = vid.duration || 60; placeThumbs(r); });
+  vid.addEventListener('timeupdate', () => {
+    $('playhead').style.left = (vid.currentTime / dur * 100) + '%';
+  });
+}
+function placeThumbs(r) {
+  const track = $('track');
+  track.querySelectorAll('.thumb').forEach(el => el.remove());
+  const showMatches = $('showMatches').checked;
+  r.screens.forEach((sc, i) => {
+    if (!showMatches && sc.verdict === 'match') return;
+    const el = document.createElement('div');
+    el.className = 'thumb';
+    el.style.cssText = 'position:absolute;top:8px;width:42px;cursor:grab;text-align:center;user-select:none';
+    const t = sc.timestamp ?? (dur * i / r.screens.length);
+    el.style.left = `calc(${Math.min(98, t / dur * 100)}% - 21px)`;
+    const col = sc.dismissed ? '#888' : (VCOL[sc.verdict] ?? '#555');
+    el.innerHTML = `<img src="${sc.figmaPng}" draggable="false" style="width:42px;height:56px;object-fit:cover;object-position:top center;border-radius:3px;border:2px solid ${col};display:block;background:#111${sc.dismissed ? ';opacity:0.55' : ''}">
+      <div style="font-size:10px;color:${col}">${(sc.timestamp ?? '?')}s${sc.anchored ? ' 📌' : ''}</div>`;
+    el.title = sc.name + ' — drag to re-anchor, click to seek';
+    let startX = null, moved = false;
+    el.addEventListener('pointerdown', e => { startX = e.clientX; moved = false; el.setPointerCapture(e.pointerId); });
+    el.addEventListener('pointermove', e => {
+      if (startX === null) return;
+      if (Math.abs(e.clientX - startX) > 4) moved = true;
+      if (!moved) return;
+      const rect = track.getBoundingClientRect();
+      const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
+      el.style.left = (x - 32) + 'px';
+      $('vid').currentTime = x / rect.width * dur;
+    });
+    el.addEventListener('pointerup', async e => {
+      const wasDrag = moved; startX = null; moved = false;
+      const rect = track.getBoundingClientRect();
+      if (!wasDrag) { $('vid').currentTime = (sc.timestamp ?? 0); preview(sc); return; }
+      const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
+      const ts = Math.round(x / rect.width * dur * 2) / 2;
+      $('rejudgeStatus').textContent = `Re-judging "${sc.name}" at ${ts}s…`;
+      const resp = await fetch('/api/rejudge', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: window._report.runId, screenName: sc.name, timestamp: ts }) }).then(r => r.json());
+      $('rejudgeStatus').textContent = resp.error ? ('❌ ' + resp.error) : `✓ ${sc.name} at ${ts}s: ${resp.screen.verdict}${resp.screen.differences.length ? ' — ' + resp.screen.differences[0] : ''}`;
+      if (!resp.error) {
+        Object.assign(sc, resp.screen);
+        Object.assign(window._report.summary, resp.summary);
+        render(window._report);
+        placeThumbs(window._report);
+      }
+    });
+    track.appendChild(el);
+  });
+}
+
+// Size the preview panel to the design's shape: portrait phone screens only
+// claim the width they need, giving the video the rest. A manual drag of the
+// divider overrides the auto-sizing for the rest of the session.
+let userResized = false;
+$('pvImg').addEventListener('load', () => {
+  if (!userResized) {
+    const ar = $('pvImg').naturalWidth / $('pvImg').naturalHeight;
+    $('preview').style.width = ar < 1 ? `min(48%, calc(74vh * ${ar.toFixed(3)} + 10px))` : '48%';
+  }
+  requestAnimationFrame(fitImage);
+});
+
+// ---- Pan & zoom inside the preview: wheel = zoom at cursor, drag = pan,
+// double-click = fit. The wheel is captured so the page never scrolls. ----
+const vz = { s: 1, tx: 0, ty: 0, fit: 1 };
+function applyView() { $('pvImg').style.transform = `translate(${vz.tx}px, ${vz.ty}px) scale(${vz.s})`; }
+function fitImage() {
+  const vp = $('pvViewport'), img = $('pvImg');
+  if (!img.naturalWidth) return;
+  vz.fit = Math.min(vp.clientWidth / img.naturalWidth, vp.clientHeight / img.naturalHeight);
+  vz.s = vz.fit;
+  vz.tx = (vp.clientWidth - img.naturalWidth * vz.s) / 2;
+  vz.ty = (vp.clientHeight - img.naturalHeight * vz.s) / 2;
+  applyView();
+}
+{
+  const vp = $('pvViewport');
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = vp.getBoundingClientRect();
+    const mx = e.clientX - r.left, my = e.clientY - r.top;
+    const ns = Math.min(Math.max(vz.s * Math.exp(-e.deltaY * 0.0018), vz.fit * 0.5), vz.fit * 20);
+    vz.tx = mx - (mx - vz.tx) * (ns / vz.s);
+    vz.ty = my - (my - vz.ty) * (ns / vz.s);
+    vz.s = ns;
+    applyView();
+  }, { passive: false });
+  vp.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    vp.setPointerCapture(e.pointerId);
+    vp.style.cursor = 'grabbing';
+    let lx = e.clientX, ly = e.clientY;
+    const move = ev => { vz.tx += ev.clientX - lx; vz.ty += ev.clientY - ly; lx = ev.clientX; ly = ev.clientY; applyView(); };
+    const up = () => { vp.style.cursor = 'grab'; vp.removeEventListener('pointermove', move); vp.removeEventListener('pointerup', up); };
+    vp.addEventListener('pointermove', move);
+    vp.addEventListener('pointerup', up);
+  });
+  vp.addEventListener('dblclick', fitImage);
+}
+
+// Drag the divider: left = bigger preview, right = bigger video.
+const divider = $('divider');
+divider.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  divider.setPointerCapture(e.pointerId);
+  const container = divider.parentElement.getBoundingClientRect();
+  const move = ev => {
+    const w = Math.min(Math.max(container.right - ev.clientX, 160), container.width - 320);
+    $('preview').style.width = w + 'px';
+    userResized = true;
+  };
+  const up = () => { divider.removeEventListener('pointermove', move); divider.removeEventListener('pointerup', up); fitImage(); };
+  divider.addEventListener('pointermove', move);
+  divider.addEventListener('pointerup', up);
+});
+
+async function dismiss(i, undo) {
+  const sc = window._report.screens[i];
+  const r = await fetch('/api/dismiss', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runId: window._report.runId, screenName: sc.name, undo }) }).then(r => r.json());
+  if (r.error) return alert(r.error);
+  Object.assign(sc, r.screen);
+  Object.assign(window._report.summary, r.summary);
+  render(window._report);
+  placeThumbs(window._report);
+}
+
+function preview(sc) {
+  $('preview').style.display = 'block';
+  $('divider').style.display = 'block';
+  $('pvImg').src = sc.figmaPng;
+  $('pvDiffs').innerHTML = sc.differences.map(d => `<li>${d}</li>`).join('');
+}
+
+let demoName = null;
+function loadScript() {
+  if (!demoName) return;
+  fetch('/api/script?name=' + encodeURIComponent(demoName)).then(r => r.json()).then(s => {
+    if (s.latest) {
+      $('voText').value = s.latest.text;
+      $('voMeta').textContent = `v${s.versions.length} · ${new Date(s.latest.date).toLocaleString()}`;
+    } else {
+      $('voMeta').textContent = 'no script stored yet';
+    }
+  });
+}
+$('voSave').onclick = async () => {
+  const text = $('voText').value.trim();
+  if (!text || !demoName) return;
+  $('voSave').disabled = true; $('voSave').textContent = 'Comparing…';
+  const r = await fetch('/api/script', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: demoName, text }) }).then(r => r.json());
+  $('voSave').disabled = false; $('voSave').textContent = 'Compare with previous & save';
+  $('voChanges').style.display = 'block';
+  $('voChanges').textContent = r.error ?? r.changes;
+  if (!r.error && !r.unchanged) $('voMeta').textContent = `v${r.version} · just now`;
+};
+
+function detail(i) {
+  const sc = window._report.screens[i];
+  $('dFigma').src = sc.figmaPng; $('dVideo').src = sc.videoPng || '';
+  $('dVideo').style.display = sc.videoPng ? '' : 'none';
+  $('dDiffs').innerHTML = sc.differences.map(d => `<li>${d}</li>`).join('') || '<li style="color:#4ade80">No differences found</li>';
+  $('detail').style.display = 'block';
+}
+</script></body></html>

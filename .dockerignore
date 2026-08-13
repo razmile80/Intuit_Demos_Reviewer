@@ -1,0 +1,10 @@
+node_modules
+runs
+reports
+data
+docs
+scripts
+test
+.env
+.git
+*.md
