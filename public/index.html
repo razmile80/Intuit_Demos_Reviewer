@@ -86,7 +86,7 @@ function loadRuns() {
           <td><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'Match'
             : [s.mismatch ? s.mismatch + ' mismatch' : '', s.missing ? s.missing + ' missing' : '', s.orderOk === false ? 'order broken' : '']
               .filter(Boolean).join(' · ') || 'check report'}</span></td>
-          <td><button class="copy" onclick="event.stopPropagation(); copyLink('${r.runId}', this)">Copy link</button></td>
+          <td><button class="copy" onclick="event.stopPropagation(); copyLink('${r.runId}', this, '${esc(r.name)}')">Copy link</button></td>
           <td>${(() => {
             const b = batchState.find(x => x.demoName === r.name);
             if (b && (b.state === 'queued' || b.state === 'running')) return batchChip(r.name);
@@ -122,8 +122,10 @@ async function renameRun(runId, el) {
   await fetch('/api/report/' + runId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
   loadRuns();
 }
-async function copyLink(runId, btn) {
-  await navigator.clipboard.writeText(location.origin + '/report/' + runId);
+const slugify = s => (s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+async function copyLink(runId, btn, name) {
+  // Stable permalink that always points at the demo's latest report.
+  await navigator.clipboard.writeText(name ? location.origin + '/demo/' + slugify(name) : location.origin + '/report/' + runId);
   btn.textContent = 'Copied ✓';
   setTimeout(() => btn.textContent = 'Copy link', 1500);
 }

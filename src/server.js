@@ -271,6 +271,16 @@ app.get('/report/:runId', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'report.html'));
 });
 
+// Stable per-demo permalink: /demo/<slug> always redirects to the demo's
+// LATEST report, so shared links never go stale across rescans.
+export const slugify = s => (s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+app.get('/demo/:slug', async (req, res) => {
+  const demos = await latestRunsPerDemo();
+  const hit = demos.find(d => slugify(d.name) === req.params.slug);
+  if (!hit) return res.status(404).send('No report for this demo (it may have been renamed).');
+  res.redirect('/report/' + hit.runId);
+});
+
 app.get('/project', (req, res) => {
   res.sendFile(path.join(__dirname, '..', 'public', 'project.html'));
 });

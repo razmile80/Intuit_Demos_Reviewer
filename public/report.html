@@ -27,7 +27,10 @@
 <a href="/" style="color:#888;text-decoration:none;font-size:13px">← Run of show</a>
 <h1>Figma ↔ Video QA report <button class="share" id="share">Copy share link</button>
   <button class="share" id="rescanBtn" style="background:#236CFF;border-color:#236CFF;color:#fff;display:none" onclick="rescanHere()">Rescan</button>
+  <span id="scanBadge" style="display:none;font-size:13px;font-weight:400;color:#888"><span class="spin" style="display:inline-block;width:12px;height:12px;border:2px solid #444;border-top-color:#236CFF;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:-2px"></span> scanning…</span>
+  <a id="newerLink" style="display:none;font-size:13px;color:#4ade80;margin-left:8px">Scan finished — view updated report →</a>
 </h1>
+<style>@keyframes spin { to { transform: rotate(360deg); } }</style>
 <div id="links" style="margin:4px 0 12px"></div>
 <div id="rescanLog" style="display:none;font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;max-height:120px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin-bottom:12px"></div>
 <div id="summary">Loading…</div>
@@ -76,8 +79,11 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
+const slugify = s => (s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
 $('share').onclick = async () => {
-  await navigator.clipboard.writeText(location.href);
+  // Stable permalink: always resolves to this demo's latest report.
+  const url = window._report?.name ? location.origin + '/demo/' + slugify(window._report.name) : location.href;
+  await navigator.clipboard.writeText(url);
   $('share').textContent = 'Link copied ✓';
   setTimeout(() => $('share').textContent = 'Copy share link', 2000);
 };
@@ -314,7 +320,30 @@ function preview(sc) {
   $('pvDiffs').innerHTML = sc.differences.map(d => `<li>${d}</li>`).join('');
 }
 
+// Reflect server-side scans of THIS demo (started by anyone, from anywhere).
+let wasScanning = false;
+async function pollActiveHere() {
+  if (!demoName) return setTimeout(pollActiveHere, 3000);
+  const active = await fetch('/api/active').then(r => r.json()).catch(() => []);
+  const scanning = active.some(a => a.demoName === demoName);
+  $('scanBadge').style.display = scanning ? 'inline-block' : 'none';
+  $('rescanBtn').style.display = scanning ? 'none' : (window._report?.figmaUrl && window._report?.frameioUrl ? 'inline-block' : 'none');
+  if (wasScanning && !scanning) {
+    // A scan just finished — link to the fresh report if it's a newer run.
+    const runs = await fetch('/api/runs').then(r => r.json()).catch(() => []);
+    const latest = runs.find(r => r.name === demoName);
+    if (latest && latest.runId !== window._report.runId) {
+      $('newerLink').href = '/report/' + latest.runId;
+      $('newerLink').style.display = 'inline';
+    }
+  }
+  wasScanning = scanning;
+  if (scanning) setTimeout(pollActiveHere, 4000);
+  else setTimeout(pollActiveHere, 15000);
+}
+
 let demoName = null;
+setTimeout(pollActiveHere, 1500);
 function loadScript() {
   if (!demoName) return;
   fetch('/api/script?name=' + encodeURIComponent(demoName)).then(r => r.json()).then(s => {
