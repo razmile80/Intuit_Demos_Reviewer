@@ -10,11 +10,12 @@
   .match { color: #4ade80; } .mismatch { color: #f87171; } .not_found, .error { color: #fbbf24; }
   .ghost { width: 180px; height: 320px; border: 2px dashed #444; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: #666; margin: 0 auto 10px; }
   .meta { font-size: 11px; color: #888; }
-  #detail { display: none; position: sticky; bottom: 0; background: #1c1c1c; border-top: 1px solid #333; padding: 20px; }
-  #detail .imgs { display: flex; gap: 24px; align-items: flex-start; }
-  #detail img { max-height: 480px; border-radius: 8px; }
-  #detail ul { color: #f99; }
-  #dClose { float: right; background: none; border: 0; color: #888; font-size: 20px; cursor: pointer; }
+  #detail { display: none; position: sticky; bottom: 0; background: #1c1c1c; border-top: 1px solid #333; padding: 14px; z-index: 20; }
+  .dvp { flex: 1; height: 58vh; overflow: hidden; position: relative; background: #111; border-radius: 8px; cursor: grab; touch-action: none; }
+  .dvp img { position: absolute; left: 0; top: 0; transform-origin: 0 0; user-select: none; pointer-events: none; }
+  .dvp .vtag { position: absolute; top: 6px; left: 6px; z-index: 2; background: rgba(0,0,0,0.6); color: #ccc; font-size: 9px; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; }
+  #detail ul { color: #f99; max-height: 10vh; overflow-y: auto; margin: 10px 0 0; }
+  #dClose { position: absolute; top: 8px; right: 8px; z-index: 30; background: rgba(0,0,0,0.55); border: 0; color: #fff; font-size: 16px; cursor: pointer; border-radius: 999px; width: 30px; height: 30px; }
   .extra { opacity: 0.55; }
   button.share { padding: 8px 18px; border-radius: 8px; border: 1px solid #444; background: #1e1e1e; color: #eee; cursor: pointer; }
   .thumb { z-index: 1; }
@@ -30,12 +31,20 @@
 <div id="links" style="margin:4px 0 12px"></div>
 <div id="rescanLog" style="display:none;font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;max-height:120px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin-bottom:12px"></div>
 <div id="summary">Loading…</div>
-<label id="extrasToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer"><input type="checkbox" id="showExtras" style="vertical-align:-2px"> <span id="extrasLabel">show extras</span></label>
+<label id="extrasToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer;margin-right:16px"><input type="checkbox" id="showExtras" style="vertical-align:-2px"> <span id="extrasLabel">Extras</span></label>
+<label id="dismissedToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer"><input type="checkbox" id="showDismissed" style="vertical-align:-2px"> <span id="dismissedLabel">Dismissed</span></label>
 <div id="strip"></div>
-<div id="detail"><button id="dClose" onclick="this.parentElement.style.display='none'">✕</button><div class="imgs"><img id="dFigma"><img id="dVideo"></div><ul id="dDiffs"></ul></div>
+<div id="detail"><button id="dClose" onclick="this.parentElement.style.display='none'">✕</button>
+  <div style="display:flex;gap:10px">
+    <div class="dvp" id="dvpFigma" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">FIGMA</span><img id="dFigma" draggable="false"></div>
+    <div class="dvp" id="dvpVideo" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">VIDEO</span><img id="dVideo" draggable="false"></div>
+  </div>
+  <ul id="dDiffs"></ul>
+</div>
 <div id="reviewer" style="display:none;margin-top:40px">
   <h2 style="font-weight:600;font-size:18px">Timeline review <span style="color:#888;font-size:13px;font-weight:400">— click a design to preview it; drag it onto the moment it belongs to and I'll re-judge it there</span>
     <label style="font-size:13px;font-weight:400;color:#ccc;margin-left:16px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="showMatches" checked style="vertical-align:-2px"> show matches</label>
+    <label style="font-size:13px;font-weight:400;color:#ccc;margin-left:12px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="showDismissedTl" style="vertical-align:-2px"> dismissed</label>
   </h2>
   <div style="display:flex;gap:20px;align-items:flex-start">
     <div style="flex:1;min-width:0">
@@ -73,6 +82,7 @@ $('share').onclick = async () => {
   setTimeout(() => $('share').textContent = 'Copy share link', 2000);
 };
 $('showExtras').onchange = () => window._report && render(window._report);
+$('showDismissed').onchange = () => window._report && (render(window._report), placeThumbs(window._report));
 const runId = location.pathname.split('/').pop();
 fetch('/api/report/' + runId).then(r => r.json()).then(render).catch(() => $('summary').textContent = 'Report not found');
 
@@ -98,7 +108,12 @@ function render(r) {
   $('summary').textContent = `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
     + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
-  $('strip').innerHTML = r.screens.map((sc, i) => `
+  const nDismissed = r.screens.filter(s => s.dismissed).length;
+  if (nDismissed) {
+    $('dismissedToggle').style.display = 'inline-block';
+    $('dismissedLabel').textContent = `Dismissed (${nDismissed})`;
+  } else $('dismissedToggle').style.display = 'none';
+  $('strip').innerHTML = r.screens.map((sc, i) => sc.dismissed && !$('showDismissed').checked ? '' : `
     <div class="col ${sc.dismissed ? 'dismissed-col' : ''}" onclick="detail(${i})">
       <div style="position:relative">${tag('Figma')}<img src="${sc.figmaPng}" loading="lazy"></div>
       ${sc.videoPng ? `<div style="position:relative">${tag('Video')}<img src="${sc.videoPng}" loading="lazy"></div>` : '<div class="ghost">Not found</div>'}
@@ -109,7 +124,7 @@ function render(r) {
     <div class="col extra"><div class="ghost">no Figma source</div><div style="position:relative">${tag('Video')}<img src="${x.videoPng}" loading="lazy"></div><div class="verdict">extra</div><div class="meta">${x.timestamp.toFixed(1)}s</div></div>`).join('') : '');
   if (r.extras.length) {
     $('extrasToggle').style.display = 'inline-block';
-    $('extrasLabel').textContent = `show extras (${r.extras.length} video moments with no matching design)`;
+    $('extrasLabel').textContent = `Extras (${r.extras.length})`;
   }
   window._report = r;
 }
@@ -120,6 +135,7 @@ let dur = 60;
 function buildTimeline(r) {
   $('reviewer').style.display = 'block';
   $('showMatches').onchange = () => placeThumbs(r);
+  $('showDismissedTl').onchange = () => placeThumbs(r);
   const vid = $('vid');
   // Re-renders (e.g. after a re-judge) must not reload the video and lose the
   // playback position — only wire the player up once.
@@ -135,8 +151,10 @@ function placeThumbs(r) {
   const track = $('track');
   track.querySelectorAll('.thumb').forEach(el => el.remove());
   const showMatches = $('showMatches').checked;
+  const showDismissedTl = $('showDismissedTl').checked;
   r.screens.forEach((sc, i) => {
     if (!showMatches && sc.verdict === 'match') return;
+    if (sc.dismissed && !showDismissedTl) return;
     const el = document.createElement('div');
     el.className = 'thumb';
     el.style.cssText = 'position:absolute;top:8px;width:42px;cursor:grab;text-align:center;user-select:none';
@@ -190,43 +208,47 @@ $('pvImg').addEventListener('load', () => {
   requestAnimationFrame(fitImage);
 });
 
-// ---- Pan & zoom inside the preview: wheel = zoom at cursor, drag = pan,
-// double-click = fit. The wheel is captured so the page never scrolls. ----
-const vz = { s: 1, tx: 0, ty: 0, fit: 1 };
-function applyView() { $('pvImg').style.transform = `translate(${vz.tx}px, ${vz.ty}px) scale(${vz.s})`; }
-function fitImage() {
-  const vp = $('pvViewport'), img = $('pvImg');
-  if (!img.naturalWidth) return;
-  vz.fit = Math.min(vp.clientWidth / img.naturalWidth, vp.clientHeight / img.naturalHeight);
-  vz.s = vz.fit;
-  vz.tx = (vp.clientWidth - img.naturalWidth * vz.s) / 2;
-  vz.ty = (vp.clientHeight - img.naturalHeight * vz.s) / 2;
-  applyView();
-}
-{
-  const vp = $('pvViewport');
+// ---- Pan & zoom viewers: wheel = zoom at cursor, drag = pan, double-click
+// = fit. The wheel is captured so the page never scrolls over a viewer. ----
+function makeViewer(vp, img) {
+  const st = { s: 1, tx: 0, ty: 0, fit: 1 };
+  const apply = () => img.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.s})`;
+  const fit = () => {
+    if (!img.naturalWidth || !vp.clientWidth) return;
+    st.fit = Math.min(vp.clientWidth / img.naturalWidth, vp.clientHeight / img.naturalHeight);
+    st.s = st.fit;
+    st.tx = (vp.clientWidth - img.naturalWidth * st.s) / 2;
+    st.ty = (vp.clientHeight - img.naturalHeight * st.s) / 2;
+    apply();
+  };
   vp.addEventListener('wheel', e => {
     e.preventDefault();
     const r = vp.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const ns = Math.min(Math.max(vz.s * Math.exp(-e.deltaY * 0.0018), vz.fit * 0.5), vz.fit * 20);
-    vz.tx = mx - (mx - vz.tx) * (ns / vz.s);
-    vz.ty = my - (my - vz.ty) * (ns / vz.s);
-    vz.s = ns;
-    applyView();
+    const ns = Math.min(Math.max(st.s * Math.exp(-e.deltaY * 0.0018), st.fit * 0.5), st.fit * 20);
+    st.tx = mx - (mx - st.tx) * (ns / st.s);
+    st.ty = my - (my - st.ty) * (ns / st.s);
+    st.s = ns;
+    apply();
   }, { passive: false });
   vp.addEventListener('pointerdown', e => {
     e.preventDefault();
     vp.setPointerCapture(e.pointerId);
     vp.style.cursor = 'grabbing';
     let lx = e.clientX, ly = e.clientY;
-    const move = ev => { vz.tx += ev.clientX - lx; vz.ty += ev.clientY - ly; lx = ev.clientX; ly = ev.clientY; applyView(); };
+    const move = ev => { st.tx += ev.clientX - lx; st.ty += ev.clientY - ly; lx = ev.clientX; ly = ev.clientY; apply(); };
     const up = () => { vp.style.cursor = 'grab'; vp.removeEventListener('pointermove', move); vp.removeEventListener('pointerup', up); };
     vp.addEventListener('pointermove', move);
     vp.addEventListener('pointerup', up);
   });
-  vp.addEventListener('dblclick', fitImage);
+  vp.addEventListener('dblclick', fit);
+  img.addEventListener('load', () => requestAnimationFrame(fit));
+  return { fit };
 }
+const pvViewer = makeViewer($('pvViewport'), $('pvImg'));
+const dvFigma = makeViewer($('dvpFigma'), $('dFigma'));
+const dvVideo = makeViewer($('dvpVideo'), $('dVideo'));
+function fitImage() { pvViewer.fit(); }
 
 // Drag the divider: left = bigger preview, right = bigger video.
 const divider = $('divider');
@@ -315,9 +337,11 @@ $('voSave').onclick = async () => {
 
 function detail(i) {
   const sc = window._report.screens[i];
-  $('dFigma').src = sc.figmaPng; $('dVideo').src = sc.videoPng || '';
-  $('dVideo').style.display = sc.videoPng ? '' : 'none';
+  $('dFigma').src = sc.figmaPng;
+  $('dvpVideo').style.display = sc.videoPng ? '' : 'none';
+  if (sc.videoPng) $('dVideo').src = sc.videoPng;
   $('dDiffs').innerHTML = sc.differences.map(d => `<li>${d}</li>`).join('') || '<li style="color:#4ade80">No differences found</li>';
   $('detail').style.display = 'block';
+  requestAnimationFrame(() => { dvFigma.fit(); dvVideo.fit(); });
 }
 </script></body></html>
