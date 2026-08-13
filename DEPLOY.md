@@ -29,15 +29,32 @@ One always-on server runs everything. All state (runs, reports, scripts, anchors
 
 ## Migrating your local demos to the server
 
-Everything you scanned locally lives in `runs/`, `reports/`, and `data/`. Copy them to the volume once:
+Everything you scanned locally lives in `runs/`, `reports/`, and `data/`. One-time copy via Dropbox:
 
-```bash
-# with Railway CLI installed and linked to the project:
-railway ssh
-# then from another terminal, copy up (or use `railway volume` tooling / scp on Fly):
-```
-
-Simplest path if CLI copying is awkward: zip the three folders, upload the zip anywhere private (Dropbox), then from `railway ssh`: download and unzip into `/persist/`. Restart the service afterward.
+1. **Pack them** — Terminal on your Mac:
+   ```bash
+   cd ~/Documents/Claude/"Intuit Investors Reviewer"
+   tar -czf ~/Desktop/demos.tgz runs reports data
+   ```
+2. **Upload `demos.tgz` to Dropbox**, copy its share link, and change the ending `dl=0` to `dl=1`.
+3. **Install the Railway CLI** and connect it:
+   ```bash
+   npm i -g @railway/cli
+   railway login        # opens the browser
+   railway link         # pick your project, environment, and service
+   ```
+4. **SSH into the server and pull the archive in**:
+   ```bash
+   railway ssh
+   # now you're on the server:
+   cd /persist
+   curl -L "PASTE-YOUR-DROPBOX-LINK-WITH-dl=1" -o demos.tgz
+   tar -xzf demos.tgz
+   rm demos.tgz
+   ls runs        # should list your run folders
+   exit
+   ```
+5. Refresh the app URL — the run of show shows all your demos. No restart needed. Delete the Dropbox file afterward (client material).
 
 ## Fly.io / Render
 
