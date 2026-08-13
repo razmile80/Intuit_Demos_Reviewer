@@ -318,7 +318,7 @@ app.post('/api/compare', (req, res) => {
   activeRuns.set(runId, { demoName: demoName ?? null, startedAt: Date.now() });
   setTimeout(async () => {
     try {
-      const report = await runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress: m => emit(runId, 'progress', m) });
+      const report = await runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress: m => emit(runId, 'progress', m), onScreen: s => emit(runId, 'screen', s) });
       emit(runId, 'done', report);
     } catch (e) {
       emit(runId, 'fail', { code: e.message, message: friendly(e.message) });

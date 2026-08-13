@@ -61,6 +61,9 @@ export async function captureFigmaFramesApi(url, runDir, onProgress = () => {}) 
   const collectScreens = (nodes, depth = 0, out = []) => {
     for (const n of nodes) {
       if (!containers.includes(n.type) || isAnnotation(n) || !n.absoluteBoundingBox) continue;
+      // Washed-out screens (opacity < 90%) are the client's way of marking
+      // them "out" — skip them and everything inside them.
+      if ((n.opacity ?? 1) < 0.9 || n.visible === false) continue;
       if (isScreen(n)) out.push(n);
       else if (depth < 2 && n.children?.length && !isStrip(n)) collectScreens(n.children, depth + 1, out);
     }

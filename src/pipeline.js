@@ -10,7 +10,7 @@ import { MODEL } from './compare/judge.js';
 import { addScriptVersion } from './scripts.js';
 import { transcribeVideo } from './transcribe.js';
 
-export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress = () => {} }) {
+export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress = () => {}, onScreen = () => {} }) {
   const triggeredAt = new Date().toISOString(); // scan/rescan trigger time, not completion
   const runDir = path.join('runs', runId);
   await fs.mkdir(runDir, { recursive: true });
@@ -60,14 +60,24 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
   // the vision model picks the best pairing from a per-screen mini contact
   // sheet; the judge self-heals across remaining candidates.
   const simMatches = await matchScreens(figmaFrames, videoFrames, { topK: 999, minScore: 0.3 });
-  const judged = await selectAndJudge(simMatches, { client, model: MODEL, runDir, anchors, onProgress });
+  const web = p => p ? '/' + p.split(path.sep).join('/') : null;
+  const judged = await selectAndJudge(simMatches, {
+    client, model: MODEL, runDir, anchors, onProgress,
+    onScreen: (j, index, total) => onScreen({
+      index, total,
+      name: j.screen.name, verdict: j.verdict, differences: j.differences,
+      anchored: j.anchored ?? false, dismissed: false,
+      figmaPng: web(j.screen.pngPath),
+      videoPng: web(j.matchedFrame?.croppedPath ?? j.matchedFrame?.pngPath),
+      timestamp: j.matchedFrame?.timestamp ?? null,
+    }),
+  });
   for (const j of judged) {
     if (j.verdict === 'not_found' && j.screen.name in dismissals) j.dismissed = true;
   }
   const sequence = sequenceCheck(judged.filter(j => j.verdict === 'match' || j.verdict === 'mismatch'));
   const extras = findExtras(videoFrames, judged);
 
-  const web = p => p ? '/' + p.split(path.sep).join('/') : null;
   let timeline = [];
   try {
     timeline = JSON.parse(await fs.readFile(path.join(runDir, 'frames.json'), 'utf8'))

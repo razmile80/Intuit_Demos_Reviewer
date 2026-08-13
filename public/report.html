@@ -111,8 +111,10 @@ function render(r) {
     $('voChanges').style.display = 'block';
     $('voChanges').textContent = (r.script.source === 'transcript' ? '[auto-transcribed from video audio]\n\n' : '') + r.script.changes;
   }
-  $('summary').textContent = `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
-    + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
+  $('summary').textContent = s.live
+    ? `scanning… ${r.screens.length}/${s.total} screens judged · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
+    : `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
+      + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
   const nDismissed = r.screens.filter(s => s.dismissed).length;
   if (nDismissed) {
@@ -284,6 +286,31 @@ async function editReportLink(key) {
   render(r);
 }
 
+// Live filmstrip: as the scan judges each screen, its column appears in the
+// report immediately instead of everything landing at once.
+let liveScreens = null;
+function attachLive(es) {
+  es.addEventListener('screen', e => {
+    const sc = JSON.parse(e.data);
+    liveScreens = liveScreens ?? [];
+    liveScreens[sc.index] = sc;
+    const screens = liveScreens.filter(Boolean);
+    const partial = {
+      ...window._report, screens, extras: [],
+      summary: {
+        total: sc.total, live: true,
+        match: screens.filter(s => s.verdict === 'match').length,
+        mismatch: screens.filter(s => s.verdict === 'mismatch' && !s.dismissed).length,
+        missing: screens.filter(s => s.verdict === 'not_found').length,
+        orderOk: true,
+      },
+    };
+    render(partial);
+    placeThumbs(partial);
+  });
+  es.addEventListener('done', e => { es.close(); location.href = '/report/' + JSON.parse(e.data).runId; });
+}
+
 async function rescanHere() {
   const r = window._report;
   if (!confirm(`Rescan "${r.name}" with the current links? Takes a few minutes.`)) return;
@@ -293,12 +320,13 @@ async function rescanHere() {
     body: JSON.stringify({ figmaUrl: r.figmaUrl, frameioUrl: r.frameioUrl, demoName: r.name }) }).then(x => x.json());
   if (resp.error) { $('rescanLog').textContent = resp.error; $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan'; return; }
   const es = new EventSource('/api/progress/' + resp.runId);
+  window._liveES = es;
   es.addEventListener('progress', e => { $('rescanLog').textContent += JSON.parse(e.data) + '\n'; $('rescanLog').scrollTop = 1e9; });
   es.addEventListener('fail', e => {
     $('rescanLog').textContent += '❌ ' + JSON.parse(e.data).message + '\n';
-    es.close(); $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan';
+    es.close(); window._liveES = null; $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan';
   });
-  es.addEventListener('done', e => { es.close(); location.href = '/report/' + JSON.parse(e.data).runId; });
+  attachLive(es);
 }
 
 async function dismiss(i, undo) {
@@ -325,7 +353,15 @@ let wasScanning = false;
 async function pollActiveHere() {
   if (!demoName) return setTimeout(pollActiveHere, 3000);
   const active = await fetch('/api/active').then(r => r.json()).catch(() => []);
-  const scanning = active.some(a => a.demoName === demoName);
+  const mine = active.find(a => a.demoName === demoName);
+  const scanning = !!mine;
+  // Passive viewers get the live filmstrip too.
+  if (mine && !window._liveES) {
+    const es = new EventSource('/api/progress/' + mine.runId);
+    window._liveES = es;
+    es.addEventListener('fail', () => { es.close(); window._liveES = null; });
+    attachLive(es);
+  }
   $('scanBadge').style.display = scanning ? 'inline-block' : 'none';
   $('rescanBtn').style.display = scanning ? 'none' : (window._report?.figmaUrl && window._report?.frameioUrl ? 'inline-block' : 'none');
   if (wasScanning && !scanning) {
