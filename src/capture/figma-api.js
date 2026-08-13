@@ -101,6 +101,17 @@ export async function captureFigmaFramesApi(url, runDir, onProgress = () => {}) 
 
   frames = frames.sort((a, b) => a.absoluteBoundingBox.x - b.absoluteBoundingBox.x);
   if (frames.length === 0) throw new Error('FIGMA_NO_FRAMES');
+
+  // Duplicate frame names (clients leave screens named "--" or "Frame 123")
+  // break everything keyed by name: anchors, dismissals, scripts. Suffix
+  // duplicates by storyboard position so each screen keys uniquely.
+  const counts = new Map();
+  for (const f of frames) {
+    const base = (f.name ?? 'screen').trim() || 'screen';
+    const n = (counts.get(base) ?? 0) + 1;
+    counts.set(base, n);
+    f.name = n === 1 ? base : `${base} (${n})`;
+  }
   onProgress(`Found ${frames.length} frames, rendering…`);
 
   const out = [];

@@ -44,16 +44,21 @@ export async function selectAndJudge(simMatches, { client, model, runDir, anchor
   let lastTs = -Infinity; // temporal prior: screens follow storyboard order
   for (const [i, m] of simMatches.entries()) {
     const { screen } = m;
-    // Human anchor: a reviewer pinned this screen to a timestamp — judge
-    // directly against the nearest frame, no sheet needed.
+    // Human anchor: a reviewer pinned this screen to a timestamp — try the
+    // nearest frame first. But anchors go stale when the video is re-edited,
+    // so a non-match falls through to the normal full search instead of
+    // giving up.
     if (anchors[screen.name] != null && m.candidates.length) {
       const target = anchors[screen.name];
       const nearest = [...m.candidates].sort((a, b) => Math.abs(a.frame.timestamp - target) - Math.abs(b.frame.timestamp - target))[0];
       onProgress(`Screen ${i + 1}/${simMatches.length}: ${screen.name} (anchored at ${target}s)`);
       const confirmed = await judgeAll([{ screen, candidates: [nearest] }], { client, onProgress: () => {} });
-      if (confirmed[0].matchedFrame) lastTs = Math.max(lastTs, confirmed[0].matchedFrame.timestamp);
-      results.push({ ...confirmed[0], anchored: true });
-      continue;
+      if (confirmed[0].verdict === 'match') {
+        lastTs = Math.max(lastTs, confirmed[0].matchedFrame.timestamp);
+        results.push({ ...confirmed[0], anchored: true });
+        continue;
+      }
+      onProgress(`Anchor at ${target}s no longer matches "${screen.name}" — searching the whole video instead`);
     }
     // Time-window shortlist: screens follow storyboard order, so only consider
     // frames at/after the previous screen's matched moment (2s slack). Within
