@@ -81,14 +81,17 @@ export async function captureFigmaFramesApi(url, runDir, onProgress = () => {}) 
       const centerInside = b => b && b.x >= hostBox.x - mx && b.x + b.width <= hostBox.x + hostBox.width + mx
         && b.y >= hostBox.y - my && b.y + b.height <= hostBox.y + hostBox.height + my;
       const file = await api(`${API}/files/${fileKey}?depth=3`, headers);
+      // Every Figma PAGE has its own coordinate space — sweep ONLY the page
+      // that contains the storyboard, or frames from unrelated pages that
+      // happen to share coordinates get scooped up.
+      const containsHost = n => n.id === host.id || (n.children ?? []).some(containsHost);
+      const hostPage = (file.document.children ?? []).find(containsHost);
       const seen = new Set(frames.map(f => f.id));
-      for (const page of file.document.children ?? []) {
-        for (const n of collectScreens((page.children ?? []).filter(v => v.id !== host.id && visible(v)))) {
-          if (!seen.has(n.id) && centerInside(n.absoluteBoundingBox)) {
-            onProgress(`Found loose screen on storyboard: ${n.name}`);
-            frames.push(n);
-            seen.add(n.id);
-          }
+      for (const n of collectScreens((hostPage?.children ?? []).filter(v => v.id !== host.id && visible(v)))) {
+        if (!seen.has(n.id) && centerInside(n.absoluteBoundingBox)) {
+          onProgress(`Found loose screen on storyboard: ${n.name}`);
+          frames.push(n);
+          seen.add(n.id);
         }
       }
     } catch (e) {

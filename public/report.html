@@ -24,8 +24,11 @@
   .dismissed-col { opacity: 0.55; }
 </style></head><body>
 <a href="/" style="color:#888;text-decoration:none;font-size:13px">← Run of show</a>
-<h1>Figma ↔ Video QA report <button class="share" id="share">Copy share link</button></h1>
+<h1>Figma ↔ Video QA report <button class="share" id="share">Copy share link</button>
+  <button class="share" id="rescanBtn" style="background:#236CFF;border-color:#236CFF;color:#fff;display:none" onclick="rescanHere()">Rescan</button>
+</h1>
 <div id="links" style="margin:4px 0 12px"></div>
+<div id="rescanLog" style="display:none;font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;max-height:120px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin-bottom:12px"></div>
 <div id="summary">Loading…</div>
 <label id="extrasToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer"><input type="checkbox" id="showExtras" style="vertical-align:-2px"> <span id="extrasLabel">show extras</span></label>
 <div id="strip"></div>
@@ -78,11 +81,13 @@ function render(r) {
   const s = r.summary;
   document.title = 'QA · ' + (r.name ?? r.runId);
   document.querySelector('h1').firstChild.textContent = (r.name ?? 'Figma ↔ Video QA report') + ' ';
+  const pencil = key => `<span onclick="editReportLink('${key}')" title="Edit link" style="cursor:pointer;color:#666;margin-right:16px">✎</span>`;
   const L = [];
-  if (r.figmaUrl) L.push(`<a href="${r.figmaUrl}" target="_blank" style="color:#60a5fa;margin-right:16px">Figma storyboard ↗</a>`);
-  if (r.frameioUrl) L.push(`<a href="${r.frameioUrl}" target="_blank" style="color:#60a5fa;margin-right:16px">Frame.io video ↗</a>`);
+  L.push((r.figmaUrl ? `<a href="${r.figmaUrl}" target="_blank" style="color:#60a5fa">Figma storyboard ↗</a>` : '<span style="color:#666">no Figma link</span>') + pencil('figmaUrl'));
+  L.push((r.frameioUrl ? `<a href="${r.frameioUrl}" target="_blank" style="color:#60a5fa">Video ↗</a>` : '<span style="color:#666">no video link</span>') + pencil('frameioUrl'));
   if (r.date) L.push(`<span style="color:#888">${new Date(r.date).toLocaleString()}</span>`);
   $('links').innerHTML = L.join('');
+  $('rescanBtn').style.display = (r.figmaUrl && r.frameioUrl) ? 'inline-block' : 'none';
   demoName = r.name ?? r.runId;
   loadScript();
   if (r.video) buildTimeline(r);
@@ -238,6 +243,34 @@ divider.addEventListener('pointerdown', e => {
   divider.addEventListener('pointermove', move);
   divider.addEventListener('pointerup', up);
 });
+
+async function editReportLink(key) {
+  const r = window._report;
+  const label = key === 'figmaUrl' ? 'Figma storyboard link' : 'Frame.io / Dropbox video link';
+  const url = prompt(label + ':', r[key] ?? '');
+  if (!url || url === r[key]) return;
+  const resp = await fetch('/api/report/' + r.runId, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: url }) }).then(x => x.json());
+  if (resp.error) return alert(resp.error);
+  r.figmaUrl = resp.figmaUrl; r.frameioUrl = resp.frameioUrl;
+  render(r);
+}
+
+async function rescanHere() {
+  const r = window._report;
+  if (!confirm(`Rescan "${r.name}" with the current links? Takes a few minutes.`)) return;
+  $('rescanBtn').disabled = true; $('rescanBtn').textContent = 'Scanning…';
+  $('rescanLog').style.display = 'block'; $('rescanLog').textContent = '';
+  const resp = await fetch('/api/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ figmaUrl: r.figmaUrl, frameioUrl: r.frameioUrl, demoName: r.name }) }).then(x => x.json());
+  if (resp.error) { $('rescanLog').textContent = resp.error; $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan'; return; }
+  const es = new EventSource('/api/progress/' + resp.runId);
+  es.addEventListener('progress', e => { $('rescanLog').textContent += JSON.parse(e.data) + '\n'; $('rescanLog').scrollTop = 1e9; });
+  es.addEventListener('fail', e => {
+    $('rescanLog').textContent += '❌ ' + JSON.parse(e.data).message + '\n';
+    es.close(); $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan';
+  });
+  es.addEventListener('done', e => { es.close(); location.href = '/report/' + JSON.parse(e.data).runId; });
+}
 
 async function dismiss(i, undo) {
   const sc = window._report.screens[i];
