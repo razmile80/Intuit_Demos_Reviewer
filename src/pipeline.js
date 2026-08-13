@@ -101,6 +101,13 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
   };
   await fs.writeFile(path.join(runDir, 'report.json'), JSON.stringify(report, null, 2));
   await saveStandaloneReport(report, runDir);
+  // Disk hygiene: prune superseded runs so the volume doesn't fill up.
+  try {
+    const { pruneOldRuns } = await import('./cleanup.js');
+    await pruneOldRuns({ onProgress });
+  } catch (e) {
+    onProgress(`Cleanup skipped: ${e.message}`);
+  }
   return report;
 }
 
