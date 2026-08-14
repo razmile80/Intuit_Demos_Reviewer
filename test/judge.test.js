@@ -13,7 +13,7 @@ test('match verdict passes through with differences', async () => {
   const matches = [{ screen: { name: 'S1', pngPath: await png() }, candidates: [{ frame: { timestamp: 2, pngPath: await png(), croppedPath: await png() }, score: 0.9 }] }];
   const out = await judgeAll(matches, { client: mockClient([{ verdict: 'mismatch', differences: ['price differs'] }]) });
   assert.equal(out[0].verdict, 'mismatch');
-  assert.deepEqual(out[0].differences, ['price differs']);
+  assert.deepEqual(out[0].differences, [{ text: 'price differs' }]); // strings normalize to objects
   assert.equal(out[0].matchedFrame.timestamp, 2);
 });
 

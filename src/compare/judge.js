@@ -13,8 +13,10 @@ Verdict rules:
 - "match": every piece of content visible in the video frame matches the Figma design (wording, numbers, option labels, selected states, colors of UI elements).
 - "mismatch": some visible content genuinely differs (different wording, different numbers, different options, different card, different colors).
 - "partial_screen": ONLY for frames where no meaningful comparison is possible — mid-transition blur, unreadable content, or only a sliver of the screen visible.
-Respond with JSON only: {"verdict": "match" | "mismatch" | "partial_screen", "differences": ["..."]}
-"differences" must be concrete and specific, e.g. "Price shows $99 in Figma but $89 in video". Empty array for match.`;
+Respond with JSON only:
+{"verdict": "match" | "mismatch" | "partial_screen", "differences": [{"text": "...", "figmaBox": {"x":0-100,"y":0-100,"w":0-100,"h":0-100}, "videoBox": {"x":0-100,"y":0-100,"w":0-100,"h":0-100}}]}
+"text" must be concrete and specific, e.g. "Price shows $99 in Figma but $89 in video". Empty differences array for match.
+"figmaBox"/"videoBox" locate the differing element as percentages of image 1 / image 2 respectively — make them tight around the element; omit a box if the element is not localizable (e.g. something entirely absent).`;
 
 // Downscale before upload: the API resizes big images anyway; sending 2880px
 // desktop renders just wastes upload time and tokens.
@@ -37,13 +39,16 @@ async function judgePair(client, screen, candidate) {
   });
   const text = msg.content.find(b => b.type === 'text')?.text ?? '{}';
   const json = text.match(/\{[\s\S]*\}/);
-  return JSON.parse(json ? json[0] : '{}');
+  const r = JSON.parse(json ? json[0] : '{}');
+  // Normalize: differences may be strings (old prompts) or {text, boxes} objects.
+  r.differences = (r.differences ?? []).map(d => typeof d === 'string' ? { text: d } : d);
+  return r;
 }
 
 // Differences the producer has explicitly dismissed as intentional.
 export function acceptedNote(screen) {
   return screen.accepted?.length
-    ? `\nThe producer reviewed and APPROVED these differences as intentional — do NOT report them or anything equivalent:\n- ${screen.accepted.join('\n- ')}`
+    ? `\nThe producer reviewed and APPROVED these differences as intentional — do NOT report them or anything equivalent:\n- ${screen.accepted.map(a => a?.text ?? a).join('\n- ')}`
     : '';
 }
 

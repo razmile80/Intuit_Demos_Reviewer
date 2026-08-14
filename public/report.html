@@ -12,7 +12,11 @@
   .meta { font-size: 11px; color: #888; }
   #detail { display: none; position: sticky; bottom: 0; background: #1c1c1c; border-top: 1px solid #333; padding: 14px; z-index: 20; }
   .dvp { flex: 1; height: 58vh; overflow: hidden; position: relative; background: #111; border-radius: 8px; cursor: grab; touch-action: none; }
-  .dvp img { position: absolute; left: 0; top: 0; transform-origin: 0 0; user-select: none; pointer-events: none; }
+  .zwrap { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  .zwrap img { display: block; user-select: none; pointer-events: none; }
+  .boxlayer { position: absolute; inset: 0; pointer-events: none; }
+  .annobox { position: absolute; border: 3px solid #ef4444; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
+  .annobox.hot { border-color: #facc15; box-shadow: 0 0 12px rgba(250,204,21,0.7); }
   .dvp .vtag { position: absolute; top: 6px; left: 6px; z-index: 2; background: rgba(0,0,0,0.6); color: #ccc; font-size: 9px; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; }
   #detail ul { color: #f99; max-height: 10vh; overflow-y: auto; margin: 10px 0 0; }
   #dClose { position: absolute; top: 8px; right: 8px; z-index: 30; background: rgba(0,0,0,0.55); border: 0; color: #fff; font-size: 16px; cursor: pointer; border-radius: 999px; width: 30px; height: 30px; }
@@ -41,8 +45,8 @@
 <div id="strip"></div>
 <div id="detail"><button id="dClose" onclick="this.parentElement.style.display='none'">✕</button>
   <div style="display:flex;gap:10px">
-    <div class="dvp" id="dvpFigma" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">FIGMA</span><img id="dFigma" draggable="false"></div>
-    <div class="dvp" id="dvpVideo" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">VIDEO</span><img id="dVideo" draggable="false"></div>
+    <div class="dvp" id="dvpFigma" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">FIGMA</span><div class="zwrap"><img id="dFigma" draggable="false"><div class="boxlayer" id="dFigmaBoxes"></div></div></div>
+    <div class="dvp" id="dvpVideo" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">VIDEO</span><div class="zwrap"><img id="dVideo" draggable="false"><div class="boxlayer" id="dVideoBoxes"></div></div></div>
   </div>
   <ul id="dDiffs"></ul>
 </div>
@@ -67,7 +71,7 @@
         style="position:absolute;top:8px;right:44px;z-index:2;background:rgba(0,0,0,0.55);border:0;color:#fff;font-size:14px;cursor:pointer;border-radius:999px;width:30px;height:30px">⛶</button>
       <div id="pvViewport" title="Scroll to zoom · drag to pan · double-click to fit"
         style="width:100%;height:74vh;overflow:hidden;position:relative;background:#111;border-radius:8px;cursor:grab;touch-action:none">
-        <img id="pvImg" draggable="false" style="position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;pointer-events:none">
+        <div class="zwrap"><img id="pvImg" draggable="false"><div class="boxlayer" id="pvBoxes"></div></div>
       </div>
       <ul id="pvDiffs" style="color:#f99;font-size:12px;padding-left:18px;margin:10px 0 0"></ul>
     </div>
@@ -194,7 +198,7 @@ function placeThumbs(r) {
       $('rejudgeStatus').textContent = `Re-judging "${sc.name}" at ${ts}s…`;
       const resp = await fetch('/api/rejudge', { method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ runId: window._report.runId, screenName: sc.name, timestamp: ts }) }).then(r => r.json());
-      $('rejudgeStatus').textContent = resp.error ? ('❌ ' + resp.error) : `✓ ${sc.name} at ${ts}s: ${resp.screen.verdict}${resp.screen.differences.length ? ' — ' + resp.screen.differences[0] : ''}`;
+      $('rejudgeStatus').textContent = resp.error ? ('❌ ' + resp.error) : `✓ ${sc.name} at ${ts}s: ${resp.screen.verdict}${resp.screen.differences.length ? ' — ' + dtext(resp.screen.differences[0]) : ''}`;
       if (!resp.error) {
         Object.assign(sc, resp.screen);
         Object.assign(window._report.summary, resp.summary);
@@ -222,10 +226,13 @@ $('pvImg').addEventListener('load', () => {
 // ---- Pan & zoom viewers: wheel = zoom at cursor, drag = pan, double-click
 // = fit. The wheel is captured so the page never scrolls over a viewer. ----
 function makeViewer(vp, img) {
+  const wrap = img.parentElement; // .zwrap: image + annotation boxes move as one
   const st = { s: 1, tx: 0, ty: 0, fit: 1 };
-  const apply = () => img.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.s})`;
+  const apply = () => wrap.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.s})`;
   const fit = () => {
     if (!img.naturalWidth || !vp.clientWidth) return;
+    wrap.style.width = img.naturalWidth + 'px';
+    wrap.style.height = img.naturalHeight + 'px';
     st.fit = Math.min(vp.clientWidth / img.naturalWidth, vp.clientHeight / img.naturalHeight);
     st.s = st.fit;
     st.tx = (vp.clientWidth - img.naturalWidth * st.s) / 2;
@@ -260,6 +267,24 @@ const pvViewer = makeViewer($('pvViewport'), $('pvImg'));
 const dvFigma = makeViewer($('dvpFigma'), $('dFigma'));
 const dvVideo = makeViewer($('dvpVideo'), $('dVideo'));
 function fitImage() { pvViewer.fit(); }
+
+// Red annotation boxes over the images, at the judge's coordinates (% of image).
+const dtext = d => d?.text ?? d;
+function setBoxes(layerId, diffs, key) {
+  const scale = b => Math.min(b, 100);
+  $(layerId).innerHTML = (diffs ?? []).map((d, i) => {
+    const b = typeof d === 'object' ? d[key] : null;
+    if (!b || b.x == null) return '';
+    return `<div class="annobox" data-i="${i}" style="left:${scale(b.x)}%;top:${scale(b.y)}%;width:${Math.max(b.w ?? 2, 1.5)}%;height:${Math.max(b.h ?? 2, 1)}%"></div>`;
+  }).join('');
+}
+function wireDiffHover(listEl, layerIds) {
+  listEl.querySelectorAll('li').forEach(li => {
+    const i = li.dataset.i;
+    li.addEventListener('mouseenter', () => layerIds.forEach(id => $(id).querySelectorAll(`.annobox[data-i="${i}"]`).forEach(b => b.classList.add('hot'))));
+    li.addEventListener('mouseleave', () => layerIds.forEach(id => $(id).querySelectorAll('.annobox').forEach(b => b.classList.remove('hot'))));
+  });
+}
 
 // Drag the divider: left = bigger preview, right = bigger video.
 const divider = $('divider');
@@ -347,7 +372,9 @@ function preview(sc) {
   $('preview').style.display = 'block';
   $('divider').style.display = 'block';
   $('pvImg').src = sc.figmaPng;
-  $('pvDiffs').innerHTML = sc.differences.map(d => `<li>${d}</li>`).join('');
+  $('pvDiffs').innerHTML = sc.differences.map((d, j) => `<li data-i="${j}">${dtext(d)}</li>`).join('');
+  setBoxes('pvBoxes', sc.differences, 'figmaBox');
+  wireDiffHover($('pvDiffs'), ['pvBoxes']);
 }
 
 // Reflect server-side scans of THIS demo (started by anyone, from anywhere).
@@ -409,7 +436,10 @@ function detail(i) {
   $('dFigma').src = sc.figmaPng;
   $('dvpVideo').style.display = sc.videoPng ? '' : 'none';
   if (sc.videoPng) $('dVideo').src = sc.videoPng;
-  $('dDiffs').innerHTML = sc.differences.map(d => `<li>${d}</li>`).join('') || '<li style="color:#4ade80">No differences found</li>';
+  $('dDiffs').innerHTML = sc.differences.map((d, j) => `<li data-i="${j}">${dtext(d)}</li>`).join('') || '<li style="color:#4ade80">No differences found</li>';
+  setBoxes('dFigmaBoxes', sc.differences, 'figmaBox');
+  setBoxes('dVideoBoxes', sc.differences, 'videoBox');
+  wireDiffHover($('dDiffs'), ['dFigmaBoxes', 'dVideoBoxes']);
   $('detail').style.display = 'block';
   requestAnimationFrame(() => { dvFigma.fit(); dvVideo.fit(); });
 }
