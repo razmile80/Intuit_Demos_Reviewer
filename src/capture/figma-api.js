@@ -139,10 +139,16 @@ export async function captureFigmaFramesApi(url, runDir, onProgress = () => {}) 
 
 const safe = s => (s ?? '').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 60) || 'screen';
 
-async function api(url, headers) {
-  const res = await fetch(url, { headers });
-  if (res.status === 403) throw new Error('FIGMA_TOKEN_INVALID');
-  if (res.status === 404) throw new Error('FIGMA_NODE_NOT_FOUND');
-  if (!res.ok) throw new Error(`FIGMA_API_${res.status}`);
-  return res.json();
+// Figma's API throws transient 5xx errors, especially on large files during
+// busy hours — retry with backoff before giving up. 429s honor Retry-After.
+async function api(url, headers, tries = 4) {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(url, { headers });
+    if (res.status === 403) throw new Error('FIGMA_TOKEN_INVALID');
+    if (res.status === 404) throw new Error('FIGMA_NODE_NOT_FOUND');
+    if (res.ok) return res.json();
+    if (attempt >= tries) throw new Error(`FIGMA_API_${res.status}`);
+    const retryAfter = Number(res.headers.get('retry-after')) || 0;
+    await new Promise(r => setTimeout(r, Math.max(retryAfter * 1000, 1500 * attempt)));
+  }
 }

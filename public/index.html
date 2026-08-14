@@ -36,6 +36,7 @@
 <h2 id="recentTitle" style="display:none;font-weight:600;font-size:16px;margin-top:32px">Run of show
   <button class="copy" style="margin-left:12px" onclick="copyProject(this)">Share project</button>
   <button class="copy rescan" id="rescanAll" style="margin-left:8px" onclick="rescanAll()">Rescan all</button>
+  <button class="copy rescan" id="rescanSel" style="margin-left:8px;display:none" onclick="rescanSelected()">Rescan selected</button>
   <button class="copy" id="batchImportBtn" style="margin-left:8px" onclick="$('importPanel').style.display = $('importPanel').style.display === 'none' ? 'block' : 'none'">Batch import</button>
   <span id="batchStatus" style="color:#888;font-size:13px;font-weight:400;margin-left:12px"></span>
 </h2>
@@ -71,12 +72,13 @@ function loadRuns() {
     if (sortMode === 'nameAsc') runs.sort((a, b) => (a.name ?? '').localeCompare(b.name ?? '', undefined, { numeric: true }));
     if (sortMode === 'nameDesc') runs.sort((a, b) => (b.name ?? '').localeCompare(a.name ?? '', undefined, { numeric: true }));
     const arrow = sortMode === 'nameAsc' ? ' ↑' : sortMode === 'nameDesc' ? ' ↓' : '';
-    $('recent').innerHTML = `<table id="runs"><tr><th>Nr</th><th>Date</th><th style="cursor:pointer" title="Sort by demo name" onclick="cycleSort()">Demo name${arrow}</th><th>Figma</th><th>Frame.io</th><th>VO script</th><th>Status</th><th>Share</th><th></th></tr>` +
+    $('recent').innerHTML = `<table id="runs"><tr><th><input type="checkbox" id="selAll" title="Select all" onclick="toggleAll(this.checked)"></th><th>Nr</th><th>Date</th><th style="cursor:pointer" title="Sort by demo name" onclick="cycleSort()">Demo name${arrow}</th><th>Figma</th><th>Frame.io</th><th>VO script</th><th>Status</th><th>Share</th><th></th></tr>` +
       runs.map((r, i) => {
         const s = r.summary ?? {};
         const ok = (s.mismatch ?? 0) === 0 && (s.missing ?? 0) === 0 && s.orderOk !== false;
         const date = r.date ? new Date(r.date).toLocaleDateString() : r.runId.slice(0, 10);
         return `<tr class="row" onclick="location.href='/report/${r.runId}'">
+          <td onclick="event.stopPropagation()"><input type="checkbox" ${selected.has(r.name) ? 'checked' : ''} onchange="toggleSel('${esc(r.name)}', this.checked)"></td>
           <td>${i + 1}</td>
           <td>${date}</td>
           <td>${esc(r.name)}<span class="rename" title="Rename" onclick="event.stopPropagation(); renameRun('${r.runId}', this)">✎</span></td>
@@ -95,7 +97,7 @@ function loadRuns() {
             return btn + (b ? ' ' + batchChip(r.name) : '');
           })()}</td>
         </tr>` + (activeRescan === r.runId
-          ? `<tr><td colspan="9" style="padding:0 12px 12px"><pre id="rowlog" style="font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;margin:0;max-height:140px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px">${esc(logBuf)}</pre></td></tr>`
+          ? `<tr><td colspan="10" style="padding:0 12px 12px"><pre id="rowlog" style="font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;margin:0;max-height:140px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px">${esc(logBuf)}</pre></td></tr>`
           : '');
       }).join('') + '</table>';
   });
@@ -201,9 +203,37 @@ async function runImport() {
   $('importInfo').textContent = `${r.queued} queued — running two at a time. Feel free to close this tab.`;
   pollBatch();
 }
+const selected = new Set();
+function toggleSel(name, on) {
+  on ? selected.add(name) : selected.delete(name);
+  updateSelButton();
+}
+function toggleAll(on) {
+  document.querySelectorAll('#runs tr.row input[type=checkbox]').forEach(cb => { cb.checked = on; });
+  selected.clear();
+  if (on) document.querySelectorAll('#runs tr.row').forEach(tr => {
+    const name = tr.querySelector('td:nth-child(4)')?.firstChild?.textContent;
+    if (name) selected.add(name);
+  });
+  updateSelButton();
+}
+function updateSelButton() {
+  $('rescanSel').style.display = selected.size ? 'inline-block' : 'none';
+  $('rescanSel').textContent = `Rescan selected (${selected.size})`;
+  $('rescanSel').disabled = batchBusy();
+}
+async function rescanSelected() {
+  if (!confirm(`Rescan ${selected.size} selected demo${selected.size > 1 ? 's' : ''}?`)) return;
+  const r = await fetch('/api/rescan-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names: [...selected] }) }).then(r => r.json());
+  if (r.error) return alert(r.error);
+  if (r.skipped?.length) alert('Skipped (missing links): ' + r.skipped.join(', '));
+  selected.clear();
+  updateSelButton();
+  pollBatch();
+}
 async function rescanAll() {
   if (!confirm('Rescan every demo with stored Figma + video links?')) return;
-  const r = await fetch('/api/rescan-all', { method: 'POST' }).then(r => r.json());
+  const r = await fetch('/api/rescan-all', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }).then(r => r.json());
   if (r.error) return alert(r.error);
   if (r.skipped?.length) alert('Skipped (missing links): ' + r.skipped.join(', '));
   pollBatch();

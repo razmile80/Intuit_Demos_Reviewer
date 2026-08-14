@@ -152,9 +152,11 @@ app.post('/api/rescan-all', async (req, res) => {
     return res.status(409).json({ error: 'A batch is already running' });
   }
   batch.length = 0;
+  const only = Array.isArray(req.body?.names) && req.body.names.length ? new Set(req.body.names) : null;
   const demos = await latestRunsPerDemo();
   const skipped = [];
   for (const r of demos) {
+    if (only && !only.has(r.name)) continue;
     if (r.figmaUrl && r.frameioUrl) batch.push({ demoName: r.name, label: r.name, figmaUrl: r.figmaUrl, frameioUrl: r.frameioUrl, state: 'queued' });
     else skipped.push(r.name);
   }
@@ -319,6 +321,9 @@ app.post('/api/compare', (req, res) => {
   setTimeout(async () => {
     try {
       const report = await runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress: m => emit(runId, 'progress', m), onScreen: s => emit(runId, 'screen', s) });
+      // A later successful scan supersedes a stale batch verdict for this demo.
+      const stale = batch.find(b => b.demoName === report.name && (b.state === 'failed' || b.state === 'done'));
+      if (stale) { stale.state = 'done'; stale.runId = runId; stale.error = undefined; }
       emit(runId, 'done', report);
     } catch (e) {
       emit(runId, 'fail', { code: e.message, message: friendly(e.message) });
@@ -338,9 +343,11 @@ function friendly(code) {
   }
   return {
     FIGMA_PRIVATE: 'This Figma file is not publicly viewable. Add a FIGMA_TOKEN to .env (recommended) or enable public link sharing.',
-    FIGMA_NO_FRAMES: 'Could not find any frames in the Figma file. Paste a link that points at the storyboard page or section. Check runs/<id>/figma-debug.png for what the browser saw.',
     FIGMA_TOKEN_INVALID: 'The FIGMA_TOKEN in .env was rejected by Figma. Generate a new personal access token (figma.com → Settings → Security → Personal access tokens).',
-    FIGMA_NODE_NOT_FOUND: 'Figma could not find that node. Paste the link to the storyboard section (right-click the section → Copy link to selection).',
+    FIGMA_NODE_NOT_FOUND: 'That Figma node no longer exists — the client likely deleted or rebuilt the storyboard (rebuilt storyboards get a NEW link). In Figma, right-click the current storyboard → Copy link to selection, update this demo\'s Figma link (✎), and rescan.',
+    FIGMA_NO_FRAMES: 'No active screens found at that Figma link. Either the link points at the wrong node, or every screen there is washed-out/hidden (washed-out screens are treated as retired).',
+    FIGMA_API_500: 'Figma\'s API had repeated server errors (their side, usually temporary). Try the rescan again in a minute.',
+    FIGMA_API_429: 'Figma rate-limited us despite retries — wait a minute and rescan.',
     FRAMEIO_NO_STREAM: 'Could not sniff the video stream from Frame.io. Upload the .mp4 manually below.',
     DROPBOX_DOWNLOAD_FAILED: 'Could not download the video from Dropbox. Check that the share link is accessible ("Anyone with the link").',
     'Not a Frame.io share link': 'That does not look like a Frame.io or Dropbox video link.',
