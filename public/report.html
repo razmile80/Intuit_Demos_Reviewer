@@ -24,16 +24,18 @@
   .col:hover .dismissBtn { display: inline-block; }
   .dismissed-col { opacity: 0.55; }
 </style></head><body>
+<div id="stickyHead" style="position:sticky;top:0;z-index:15;background:#141414;padding:10px 0 8px;margin:-32px 0 8px;border-bottom:1px solid #262626">
 <a href="/" style="color:#888;text-decoration:none;font-size:13px">← Run of show</a>
-<h1>Figma ↔ Video QA report <button class="share" id="share">Copy share link</button>
+<h1 style="margin:6px 0 4px">Figma ↔ Video QA report <button class="share" id="share">Copy share link</button>
   <button class="share" id="rescanBtn" style="background:#236CFF;border-color:#236CFF;color:#fff;display:none" onclick="rescanHere()">Rescan</button>
   <span id="scanBadge" style="display:none;font-size:13px;font-weight:400;color:#888"><span class="spin" style="display:inline-block;width:12px;height:12px;border:2px solid #444;border-top-color:#236CFF;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:-2px"></span> scanning…</span>
   <a id="newerLink" style="display:none;font-size:13px;color:#4ade80;margin-left:8px">Scan finished — view updated report →</a>
 </h1>
+<div id="links" style="margin:4px 0 8px"></div>
+<div id="summary" style="margin:0">Loading…</div>
+</div>
 <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
-<div id="links" style="margin:4px 0 12px"></div>
 <div id="rescanLog" style="display:none;font:12px ui-monospace,monospace;color:#8a8;white-space:pre-wrap;max-height:120px;overflow-y:auto;background:#161616;border:1px solid #2a2a2a;border-radius:8px;padding:10px;margin-bottom:12px"></div>
-<div id="summary">Loading…</div>
 <label id="extrasToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer;margin-right:16px"><input type="checkbox" id="showExtras" style="vertical-align:-2px"> <span id="extrasLabel">Extras</span></label>
 <label id="dismissedToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer"><input type="checkbox" id="showDismissed" style="vertical-align:-2px"> <span id="dismissedLabel">Dismissed</span></label>
 <div id="strip"></div>
