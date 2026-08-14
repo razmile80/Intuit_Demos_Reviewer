@@ -77,7 +77,10 @@ function loadRuns() {
       runs.map((r, i) => {
         const s = r.summary ?? {};
         const ok = (s.mismatch ?? 0) === 0 && (s.missing ?? 0) === 0 && s.orderOk !== false;
-        const date = r.date ? new Date(r.date).toLocaleDateString() : r.runId.slice(0, 10);
+        const d = r.date ? new Date(r.date) : null;
+        const date = d
+          ? `${d.toLocaleDateString()}<div style="font-size:11px;color:#777">${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`
+          : r.runId.slice(0, 10);
         return `<tr class="row" onclick="location.href='/report/${r.runId}'">
           <td onclick="event.stopPropagation()"><input type="checkbox" ${selected.has(r.name) ? 'checked' : ''} onchange="toggleSel('${esc(r.name)}', this.checked)"></td>
           <td>${i + 1}</td>
