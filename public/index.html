@@ -37,6 +37,7 @@
   <button class="copy" style="margin-left:12px" onclick="copyProject(this)">Share project</button>
   <button class="copy rescan" id="rescanAll" style="margin-left:8px" onclick="rescanAll()">Rescan all</button>
   <button class="copy rescan" id="rescanSel" style="margin-left:8px;display:none" onclick="rescanSelected()">Rescan selected</button>
+  <button class="copy" id="deleteSel" style="margin-left:8px;display:none;background:#7f1d1d;border-color:#7f1d1d;color:#fff" onclick="deleteSelected()">Delete selected</button>
   <button class="copy" id="batchImportBtn" style="margin-left:8px" onclick="$('importPanel').style.display = $('importPanel').style.display === 'none' ? 'block' : 'none'">Batch import</button>
   <span id="batchStatus" style="color:#888;font-size:13px;font-weight:400;margin-left:12px"></span>
 </h2>
@@ -221,6 +222,20 @@ function updateSelButton() {
   $('rescanSel').style.display = selected.size ? 'inline-block' : 'none';
   $('rescanSel').textContent = `Rescan selected (${selected.size})`;
   $('rescanSel').disabled = batchBusy();
+  $('deleteSel').style.display = selected.size ? 'inline-block' : 'none';
+  $('deleteSel').textContent = `Delete selected (${selected.size})`;
+  $('deleteSel').disabled = batchBusy();
+}
+async function deleteSelected() {
+  const names = [...selected];
+  if (!confirm(`Delete ${names.length} demo${names.length > 1 ? 's' : ''} PERMANENTLY?\n\n${names.join('\n')}\n\nThis removes all their reports, scripts, pins and dismissals. There is no undo.`)) return;
+  const typed = prompt(`Type DELETE to confirm removing ${names.length} demo${names.length > 1 ? 's' : ''}:`);
+  if (typed !== 'DELETE') return;
+  const r = await fetch('/api/delete-demos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names }) }).then(r => r.json());
+  if (r.error) return alert(r.error);
+  selected.clear();
+  updateSelButton();
+  loadRuns();
 }
 async function rescanSelected() {
   if (!confirm(`Rescan ${selected.size} selected demo${selected.size > 1 ? 's' : ''}?`)) return;

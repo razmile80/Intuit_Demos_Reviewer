@@ -181,6 +181,40 @@ app.post('/api/import-batch', (req, res) => {
   res.json({ queued: batch.length });
 });
 
+// Delete demos entirely: all their runs plus per-demo memory (scripts,
+// anchors, dismissals). Refuses while any scan is running.
+app.post('/api/delete-demos', async (req, res) => {
+  const names = new Set(req.body?.names ?? []);
+  if (!names.size) return res.status(400).json({ error: 'No demos selected' });
+  if (batch.some(b => b.state === 'queued' || b.state === 'running') || activeRuns.size) {
+    return res.status(409).json({ error: 'Wait for running scans to finish before deleting' });
+  }
+  let deletedRuns = 0;
+  try {
+    for (const id of await fs.readdir('runs')) {
+      if (id === 'uploads') continue;
+      try {
+        const r = JSON.parse(await fs.readFile(path.join('runs', id, 'report.json'), 'utf8'));
+        if (names.has(r.name)) {
+          await fs.rm(path.join('runs', id), { recursive: true, force: true });
+          deletedRuns++;
+        }
+      } catch { /* unfinished run — leave it */ }
+    }
+  } catch { /* no runs dir */ }
+  for (const file of ['scripts.json', 'anchors.json', 'dismissals.json']) {
+    try {
+      const p = path.join('data', file);
+      const obj = JSON.parse(await fs.readFile(p, 'utf8'));
+      let changed = false;
+      for (const n of names) if (n in obj) { delete obj[n]; changed = true; }
+      if (changed) await fs.writeFile(p, JSON.stringify(obj, null, 2));
+    } catch { /* file absent */ }
+  }
+  for (let i = batch.length - 1; i >= 0; i--) if (names.has(batch[i].demoName)) batch.splice(i, 1);
+  res.json({ ok: true, deletedRuns });
+});
+
 app.get('/api/batch', (req, res) => {
   res.json(batch.map(({ demoName, label, state, runId, error }) => ({ demoName: demoName ?? null, label: label ?? demoName, state, runId, error })));
 });
