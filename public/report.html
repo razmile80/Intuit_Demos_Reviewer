@@ -47,7 +47,7 @@
   #dClose { position: absolute; top: 8px; right: 8px; z-index: 30; background: rgba(0,0,0,0.55); border: 0; color: #fff; font-size: 16px; cursor: pointer; border-radius: 999px; width: 30px; height: 30px; }
   .extra { opacity: 0.55; }
   button.share { padding: 8px 18px; border-radius: 8px; border: 1px solid #444; background: #1e1e1e; color: #eee; cursor: pointer; }
-  .thumb { z-index: 1; }
+  .thumb { z-index: 1; position: relative; }
   .thumb:hover { z-index: 10; }
   .dismissBtn { display: none; background: #1e1e1e; border: 1px solid #444; color: #ccc; border-radius: 6px; padding: 2px 10px; font-size: 11px; cursor: pointer; margin-top: 4px; }
   .col:hover .dismissBtn { display: inline-block; }
@@ -199,10 +199,11 @@ function render(r) {
   $('summary').textContent = s.live
     ? `scanning… ${r.screens.length}/${s.total} screens judged · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
     : `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
+      + (s.extras ? ` · ${s.extras} potential Figma update${s.extras > 1 ? 's' : ''}` : '')
       + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`
       + (s.collapsed ? '  ⚠ pairing unreliable — several screens matched the same moment; drag one to the right time and rescan' : '');
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
-  const nDismissed = r.screens.filter(s => s.dismissed).length;
+  const nDismissed = r.screens.filter(s => s.dismissed).length + (r.extras ?? []).filter(x => x.dismissed).length;
   if (nDismissed) {
     $('dismissedToggle').style.display = 'inline-block';
     $('dismissedLabel').textContent = `Dismissed (${nDismissed})`;
@@ -214,12 +215,19 @@ function render(r) {
     lastT = sc.timestamp ?? lastT + 0.001;
     return { kind: 'screen', sc, i, t: lastT };
   });
-  if ($('showExtras').checked) items.push(...r.extras.map(x => ({ kind: 'extra', x, t: x.timestamp })));
+  if ($('showExtras').checked) {
+    items.push(...r.extras
+      .filter(x => !x.dismissed || $('showDismissed').checked)
+      .map(x => ({ kind: 'extra', x, t: x.timestamp })));
+  }
   items.sort((a, b) => a.t - b.t);
 
   $('strip').innerHTML = items.map(it => {
     if (it.kind === 'extra') {
-      return `<div class="col extra"><div class="ghost">no Figma source</div><div style="position:relative">${tag('Video')}<img src="${it.x.videoPng}" loading="lazy"></div><div class="verdict" style="color:#fbbf24">extra</div><div class="meta">${it.t.toFixed(1)}s</div></div>`;
+      const d = it.x.dismissed;
+      return `<div class="col extra ${d ? 'dismissed-col' : ''}"><div class="ghost">potential Figma update</div><div style="position:relative">${tag('Video')}<img src="${it.x.videoPng}" loading="lazy"></div>
+        <div class="verdict" style="color:${d ? '#888' : '#fbbf24'}">${d ? 'dismissed' : 'extra'}</div><div class="meta">${it.t.toFixed(1)}s</div>
+        <button class="dismissBtn" onclick="event.stopPropagation(); dismissExtra(${it.t}, ${!!d})">${d ? 'Restore' : 'Dismiss'}</button></div>`;
     }
     const { sc, i } = it;
     if (sc.dismissed && !$('showDismissed').checked) return '';
@@ -229,7 +237,7 @@ function render(r) {
       ${sc.videoPng ? `<div style="position:relative">${tag('Video')}<img src="${sc.videoPng}" loading="lazy"></div>` : '<div class="ghost">Not found</div>'}
       <div class="verdict ${sc.dismissed ? '' : sc.verdict}" ${sc.dismissed ? 'style="color:#888"' : ''}>${sc.dismissed ? 'dismissed' : sc.verdict.replace('_', ' ')}${sc.flagged ? ' ✎' : ''}</div>
       <div class="meta">${sc.name}${sc.timestamp !== null ? ' · ' + sc.timestamp.toFixed(1) + 's' : ''}</div>
-      ${sc.verdict !== 'match' ? `<button class="dismissBtn" onclick="event.stopPropagation(); dismiss(${i}, ${!!sc.dismissed})">${sc.dismissed ? 'Restore' : 'Dismiss'}</button>` : ''}
+      <button class="dismissBtn" onclick="event.stopPropagation(); dismiss(${i}, ${!!sc.dismissed})">${sc.dismissed ? 'Restore' : 'Dismiss'}</button>
     </div>`;
   }).join('');
   if (r.extras.length) {
@@ -269,9 +277,39 @@ function buildTimeline(r) {
   });
   vid.addEventListener('seeked', drawVideoBoxes);
 }
+// Extras shown as red zones on the track: contiguous extras merge into one
+// band, so a stretch of video with no matching design is visible at a glance.
+function placeExtraZones(r) {
+  const track = $('track');
+  track.querySelectorAll('.exzone').forEach(el => el.remove());
+  // Dismissed extras stop marking the timeline unless the reviewer asks to see them.
+  const times = (r.extras ?? [])
+    .filter(x => !x.dismissed || $('showDismissedTl').checked)
+    .map(x => x.timestamp).sort((a, b) => a - b);
+  if (!times.length) return;
+  const bands = [];
+  for (const t of times) {
+    const last = bands.at(-1);
+    if (last && t - last.end <= 6) last.end = t;
+    else bands.push({ start: t, end: t });
+  }
+  for (const b of bands) {
+    const left = b.start / dur * 100;
+    const width = Math.max((b.end - b.start) / dur * 100, 1.2);
+    const el = document.createElement('div');
+    el.className = 'exzone';
+    el.title = `Potential Figma updates ${b.start.toFixed(1)}s–${b.end.toFixed(1)}s — video content with no matching design. Click to play from here.`;
+    el.style.cssText = `position:absolute;top:0;bottom:0;left:${left}%;width:${width}%;background:rgba(248,113,113,0.16);border:1px dashed #f87171;border-radius:4px;z-index:0;cursor:pointer`;
+    el.innerHTML = `<span style="position:absolute;bottom:2px;left:4px;font-size:10px;color:#f87171;white-space:nowrap">potential Figma updates</span>`;
+    el.onclick = () => { $('vid').currentTime = b.start; };
+    track.appendChild(el);
+  }
+}
+
 function placeThumbs(r) {
   const track = $('track');
   track.querySelectorAll('.thumb').forEach(el => el.remove());
+  placeExtraZones(r);
   const showMatches = $('showMatches').checked;
   const showDismissedTl = $('showDismissedTl').checked;
   r.screens.forEach((sc, i) => {
@@ -529,6 +567,16 @@ async function removeNote(noteIndex) {
   Object.assign(sc, resp.screen);
   Object.assign(window._report.summary, resp.summary);
   render(window._report); placeThumbs(window._report); detail(window._detailIndex);
+}
+
+async function dismissExtra(t, undo) {
+  const r = await fetch('/api/dismiss-extra', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runId: window._report.runId, timestamp: t, undo }) }).then(x => x.json());
+  if (r.error) return alert(r.error);
+  const ex = window._report.extras.find(x => x.timestamp === t);
+  if (ex) ex.dismissed = r.dismissed;
+  Object.assign(window._report.summary, r.summary);
+  render(window._report); placeThumbs(window._report); placeExtraZones(window._report);
 }
 
 async function dismiss(i, undo) {

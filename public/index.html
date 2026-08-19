@@ -77,7 +77,9 @@ function loadRuns() {
     $('recent').innerHTML = `<table id="runs"><tr><th><input type="checkbox" id="selAll" title="Select all" onclick="toggleAll(this.checked)"></th><th>Nr</th><th>Date</th><th style="cursor:pointer" title="Sort by demo name" onclick="cycleSort()">Demo name${arrow}</th><th>Figma</th><th>Frame.io</th><th>VO script</th><th>Status</th><th>Share</th><th></th></tr>` +
       runs.map((r, i) => {
         const s = r.summary ?? {};
-        const ok = (s.mismatch ?? 0) === 0 && (s.missing ?? 0) === 0 && s.orderOk !== false;
+        // Extras are findings too — a demo with video content that has no
+        // design isn't a clean "Match".
+        const ok = (s.mismatch ?? 0) === 0 && (s.missing ?? 0) === 0 && s.orderOk !== false && (s.extras ?? 0) === 0;
         const d = r.date ? new Date(r.date) : null;
         const date = d
           ? `${d.toLocaleDateString()}<div style="font-size:11px;color:#777">${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`
@@ -91,7 +93,8 @@ function loadRuns() {
           <td>${link(r.frameioUrl, 'Video')}<span class="rename" title="Edit Frame.io link" onclick="event.stopPropagation(); editLink('${r.runId}', 'frameioUrl', this)">✎</span></td>
           <td data-script="${esc(r.name)}" data-href="/report/${r.runId}"><span style="color:#555">—</span></td>
           <td><span class="badge ${ok ? 'ok' : 'bad'}">${ok ? 'Match'
-            : [s.mismatch ? s.mismatch + ' mismatch' : '', s.missing ? s.missing + ' missing' : '', s.orderOk === false ? 'order broken' : '']
+            : [s.mismatch ? s.mismatch + ' mismatch' : '', s.missing ? s.missing + ' missing' : '',
+               s.extras ? 'Potential Figma updates' : '', s.orderOk === false ? 'order broken' : '']
               .filter(Boolean).join(' · ') || 'check report'}</span></td>
           <td><button class="copy" onclick="event.stopPropagation(); copyLink('${r.runId}', this, '${esc(r.name)}')">Copy link</button></td>
           <td>${(() => {

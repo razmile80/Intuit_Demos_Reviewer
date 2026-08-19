@@ -106,6 +106,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
       missing: judged.filter(j => j.verdict === 'not_found' && !j.dismissed).length,
       errors: judged.filter(j => j.verdict === 'error').length,
       orderOk: sequence.ok,
+      extras: extras.filter(f => !dismissals[`__extra@${f.timestamp}`]).length,
       collapsed,
     },
     screens: judged.map(j => ({
@@ -114,7 +115,10 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
       videoPng: web(j.matchedFrame?.croppedPath ?? j.matchedFrame?.pngPath),
       timestamp: j.matchedFrame?.timestamp ?? null,
     })),
-    extras: extras.slice(0, 20).map(f => ({ videoPng: web(f.croppedPath ?? f.pngPath), timestamp: f.timestamp })),
+    extras: extras.slice(0, 20).map(f => ({
+      videoPng: web(f.croppedPath ?? f.pngPath), timestamp: f.timestamp,
+      dismissed: Boolean(dismissals[`__extra@${f.timestamp}`]), // stays dismissed across rescans
+    })),
     sequence,
     script: await scriptPromise,
   };

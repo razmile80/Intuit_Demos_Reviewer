@@ -310,6 +310,7 @@ export function recount(report) {
   report.summary.mismatch = s.filter(x => x.verdict === 'mismatch' && !x.dismissed).length;
   report.summary.missing = s.filter(x => x.verdict === 'not_found' && !x.dismissed).length;
   report.summary.flagged = s.filter(x => x.flagged).length;
+  report.summary.extras = (report.extras ?? []).filter(x => !x.dismissed).length;
 }
 
 // Merge a screen's manual notes into its differences (they always win over
@@ -357,6 +358,34 @@ app.post('/api/video-note', async (req, res) => {
     await fs.mkdir('data', { recursive: true });
     await fs.writeFile(NOTES_FILE, JSON.stringify(notes, null, 2));
     res.json({ ok: true, notes: perDemo.__video ?? [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Dismiss a "potential Figma update" (extra) — acknowledged, not a finding.
+app.post('/api/dismiss-extra', async (req, res) => {
+  try {
+    const { runId, timestamp, undo } = req.body;
+    const safe = runId.replace(/[^a-z0-9-]/gi, '');
+    const file = path.join('runs', safe, 'report.json');
+    const report = JSON.parse(await fs.readFile(file, 'utf8'));
+    const ex = report.extras.find(x => x.timestamp === timestamp);
+    if (!ex) return res.status(404).json({ error: 'Extra not found' });
+    ex.dismissed = !undo;
+
+    let dismissals = {};
+    try { dismissals = JSON.parse(await fs.readFile(path.join('data', 'dismissals.json'), 'utf8')); } catch { /* none */ }
+    const demo = dismissals[report.name] ?? {};
+    const key = `__extra@${timestamp}`;
+    if (undo) delete demo[key]; else demo[key] = ['acknowledged'];
+    dismissals[report.name] = demo;
+    await fs.mkdir('data', { recursive: true });
+    await fs.writeFile(path.join('data', 'dismissals.json'), JSON.stringify(dismissals, null, 2));
+
+    report.summary.extras = report.extras.filter(x => !x.dismissed).length;
+    await fs.writeFile(file, JSON.stringify(report, null, 2));
+    res.json({ ok: true, summary: report.summary, dismissed: ex.dismissed });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
