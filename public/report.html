@@ -151,6 +151,7 @@ addEventListener('keydown', e => {
   // Space plays/pauses the video from anywhere on the page (default is scroll).
   if (e.code === 'Space' && !typing && $('vid')?.src) {
     e.preventDefault();
+    e.stopPropagation();
     $('vid').paused ? $('vid').play() : $('vid').pause();
     return;
   }
@@ -168,7 +169,7 @@ addEventListener('keydown', e => {
     $('preview').style.display = 'none';
     $('divider').style.display = 'none';
   }
-});
+}, true); // capture phase: the video's own controls consume Space before it bubbles
 
 new IntersectionObserver(
   ([e]) => $('stickyHead').classList.toggle('condensed', !e.isIntersecting),
