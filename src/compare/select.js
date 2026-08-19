@@ -38,10 +38,24 @@ Empty differences array for match.`;
 
 // One call per screen: pick + judge from the mini sheet. Screens the model
 // suspects of mismatch get confirmed at full resolution by the judge.
-export async function selectAndJudge(simMatches, { client, model, runDir, anchors = {}, onProgress = () => {}, onScreen = () => {} }) {
-  const { judgeAll } = await import('./judge.js');
+export async function selectAndJudge(simMatches, { client, model, runDir, anchors = {}, deep = false, onProgress = () => {}, onScreen = () => {} }) {
+  const { judgeAll, bandSweep } = await import('./judge.js');
   const results = [];
-  const push = (r, i) => { results.push(r); try { onScreen(r, i, simMatches.length); } catch { /* live updates are best-effort */ } };
+  const push = async (r, i) => {
+    // Deep scan: band-by-band sweep catches subtle artwork/placeholder edits
+    // that a single whole-screen look skims over.
+    if (deep && r.matchedFrame) {
+      onProgress(`Deep scan: ${r.screen.name}`);
+      const extra = await bandSweep(client, r.screen, r.matchedFrame);
+      if (extra.length) {
+        const seen = new Set(r.differences.map(d => (d.text ?? d).toLowerCase().slice(0, 40)));
+        for (const d of extra) if (!seen.has((d.text ?? '').toLowerCase().slice(0, 40))) r.differences.push(d);
+        if (r.verdict === 'match') r.verdict = 'mismatch';
+      }
+    }
+    results.push(r);
+    try { onScreen(r, i, simMatches.length); } catch { /* live updates are best-effort */ }
+  };
   let lastTs = -Infinity; // temporal prior: screens follow storyboard order
   for (const [i, m] of simMatches.entries()) {
     const { screen } = m;
@@ -56,7 +70,7 @@ export async function selectAndJudge(simMatches, { client, model, runDir, anchor
       const confirmed = await judgeAll([{ screen, candidates: [nearest] }], { client, onProgress: () => {} });
       if (confirmed[0].verdict === 'match') {
         lastTs = Math.max(lastTs, confirmed[0].matchedFrame.timestamp);
-        push({ ...confirmed[0], anchored: true }, i);
+        await push({ ...confirmed[0], anchored: true }, i);
         continue;
       }
       onProgress(`Anchor at ${target}s no longer matches "${screen.name}" — searching the whole video instead`);
@@ -70,7 +84,7 @@ export async function selectAndJudge(simMatches, { client, model, runDir, anchor
     if (candidates.length === 0) candidates = m.candidates;
     candidates = candidates.slice(0, 12);
     if (candidates.length === 0) {
-      push({ screen, matchedFrame: null, verdict: 'not_found', differences: [] }, i);
+      await push({ screen, matchedFrame: null, verdict: 'not_found', differences: [] }, i);
       continue;
     }
     onProgress(`Screen ${i + 1}/${simMatches.length}: ${screen.name}`);
@@ -97,12 +111,12 @@ export async function selectAndJudge(simMatches, { client, model, runDir, anchor
       onProgress(`No pick from sheet — confirming at full resolution: ${screen.name}`);
       const confirmed = await judgeAll([{ screen, candidates: candidates.slice(0, 3) }], { client, onProgress: () => {} });
       if (confirmed[0].matchedFrame) lastTs = Math.max(lastTs, confirmed[0].matchedFrame.timestamp);
-      push(confirmed[0], i);
+      await push(confirmed[0], i);
       continue;
     }
     if (r.verdict === 'match') {
       lastTs = Math.max(lastTs, pick.frame.timestamp);
-      push({ screen, matchedFrame: pick.frame, verdict: 'match', differences: [] }, i);
+      await push({ screen, matchedFrame: pick.frame, verdict: 'match', differences: [] }, i);
       continue;
     }
     // Suspected mismatch → confirm at full resolution across top candidates.
@@ -110,7 +124,7 @@ export async function selectAndJudge(simMatches, { client, model, runDir, anchor
     const others = candidates.filter(c => c !== pick);
     const confirmed = await judgeAll([{ screen, candidates: [pick, ...others].slice(0, 3) }], { client, onProgress: () => {} });
     if (confirmed[0].matchedFrame) lastTs = Math.max(lastTs, confirmed[0].matchedFrame.timestamp);
-    push(confirmed[0], i);
+    await push(confirmed[0], i);
   }
   return results;
 }

@@ -30,6 +30,7 @@
   <input type="url" id="frameio" placeholder="Frame.io or Dropbox video link"><br>
   <textarea id="script" placeholder="VO script (optional — leave empty to auto-transcribe from the video)" style="width:min(480px,90vw);min-height:64px;padding:10px;border-radius:8px;border:1px solid #333;background:#1e1e1e;color:#eee;margin-bottom:12px;font-family:inherit;font-size:13px"></textarea><br>
   <button class="go" id="go">Compare</button>
+  <label style="margin-left:12px;font-size:13px;color:#ccc;cursor:pointer" title="Sweeps each screen in overlapping bands — catches subtle artwork, icon and placeholder changes. Slower, but far more thorough."><input type="checkbox" id="deepScan" style="vertical-align:-2px"> Deep scan</label>
   <div id="fallback">Stream sniffing failed — upload the mp4 instead: <input type="file" id="mp4" accept="video/mp4,video/quicktime"></div>
 </div>
 <div id="log"></div>
@@ -145,7 +146,7 @@ $('mp4').onchange = async e => {
   $('go').click();
 };
 
-$('go').onclick = () => startRun({ figmaUrl: $('figma').value.trim(), frameioUrl: $('frameio').value.trim(), videoPath: uploadedPath, script: $('script').value.trim() || null });
+$('go').onclick = () => startRun({ figmaUrl: $('figma').value.trim(), frameioUrl: $('frameio').value.trim(), videoPath: uploadedPath, script: $('script').value.trim() || null, deep: $('deepScan').checked });
 
 async function startRun(body) {
   logBuf = '';
@@ -293,7 +294,7 @@ function rescan(runId) {
     if (!rep.figmaUrl || !rep.frameioUrl) return alert('This run has no stored links (older run) — paste them above instead.');
     activeRescan = runId;
     loadRuns();
-    startRun({ figmaUrl: rep.figmaUrl, frameioUrl: rep.frameioUrl, demoName: rep.name });
+    startRun({ figmaUrl: rep.figmaUrl, frameioUrl: rep.frameioUrl, demoName: rep.name, deep: $('deepScan').checked });
   });
 }
 

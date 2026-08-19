@@ -140,6 +140,7 @@ function pumpBatch() {
     item.runId = new Date().toISOString().slice(0, 10) + '-' + crypto.randomBytes(3).toString('hex');
     runPipeline({
       figmaUrl: item.figmaUrl, frameioUrl: item.frameioUrl, demoName: item.demoName,
+      deep: item.deep ?? false, // batches stay fast; deep scan is opt-in
       runId: item.runId, onProgress: () => {},
     }).then(report => { item.state = 'done'; item.demoName ??= report.name; })
       .catch(e => { item.state = 'failed'; item.error = friendly(e.message); })
@@ -345,7 +346,7 @@ app.post('/api/upload', upload.single('video'), (req, res) => {
 });
 
 app.post('/api/compare', (req, res) => {
-  const { figmaUrl, frameioUrl, videoPath, demoName, script } = req.body;
+  const { figmaUrl, frameioUrl, videoPath, demoName, script, deep } = req.body;
   if (!figmaUrl || (!frameioUrl && !videoPath)) {
     return res.status(400).json({ error: 'figmaUrl and frameioUrl (or an uploaded video) are required' });
   }
@@ -354,7 +355,7 @@ app.post('/api/compare', (req, res) => {
   activeRuns.set(runId, { demoName: demoName ?? null, startedAt: Date.now() });
   setTimeout(async () => {
     try {
-      const report = await runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress: m => emit(runId, 'progress', m), onScreen: s => emit(runId, 'screen', s) });
+      const report = await runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, deep, runId, onProgress: m => emit(runId, 'progress', m), onScreen: s => emit(runId, 'screen', s) });
       // A later successful scan supersedes a stale batch verdict for this demo.
       const stale = batch.find(b => b.demoName === report.name && (b.state === 'failed' || b.state === 'done'));
       if (stale) { stale.state = 'done'; stale.runId = runId; stale.error = undefined; }

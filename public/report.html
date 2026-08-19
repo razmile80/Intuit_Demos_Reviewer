@@ -17,6 +17,17 @@
   .boxlayer { position: absolute; inset: 0; pointer-events: none; }
   .annobox { position: absolute; border: 3px solid #ef4444; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
   .annobox.hot { border-color: #facc15; box-shadow: 0 0 12px rgba(250,204,21,0.7); }
+  /* Condensed header: shrinks on scroll so the video and timeline get the room. */
+  /* No transitions here on purpose: animating layout properties (font-size,
+     padding) on a sticky element that overlaps transformed content makes
+     Chrome leave a stale second copy painted behind it. Snap instead, and
+     give the header its own compositing layer so it repaints cleanly. */
+  #stickyHead { will-change: transform; transform: translateZ(0); backface-visibility: hidden; }
+  #stickyHead.condensed { padding: 4px 0 4px; }
+  #stickyHead.condensed h1 { font-size: 15px; margin: 0; }
+  #stickyHead.condensed h1 button { padding: 3px 10px; font-size: 12px; }
+  #stickyHead.condensed #backLink, #stickyHead.condensed #links { display: none; }
+  #stickyHead.condensed #summary { font-size: 13px; color: #aaa; }
   .dvp .vtag { position: absolute; top: 6px; left: 6px; z-index: 2; background: rgba(0,0,0,0.6); color: #ccc; font-size: 9px; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.5px; }
   #detail ul { color: #f99; max-height: 10vh; overflow-y: auto; margin: 10px 0 0; }
   #dClose { position: absolute; top: 8px; right: 8px; z-index: 30; background: rgba(0,0,0,0.55); border: 0; color: #fff; font-size: 16px; cursor: pointer; border-radius: 999px; width: 30px; height: 30px; }
@@ -28,12 +39,14 @@
   .col:hover .dismissBtn { display: inline-block; }
   .dismissed-col { opacity: 0.55; }
 </style></head><body>
-<div id="stickyHead" style="position:sticky;top:0;z-index:15;background:#141414;padding:10px 0 8px;margin:-32px 0 8px;border-bottom:1px solid #262626">
-<a href="/" style="color:#888;text-decoration:none;font-size:13px">← Run of show</a>
+<div id="headSentinel" style="height:1px;margin:-32px 0 0"></div>
+<div id="stickyHead" style="position:sticky;top:0;z-index:15;background:#141414;padding:10px 0 8px;margin:0 0 8px;border-bottom:1px solid #262626">
+<a href="/" id="backLink" style="color:#888;text-decoration:none;font-size:13px">← Run of show</a>
 <h1 style="margin:6px 0 4px">Figma ↔ Video QA report <button class="share" id="share">Copy share link</button>
   <button class="share" id="rescanBtn" style="background:#236CFF;border-color:#236CFF;color:#fff;display:none" onclick="rescanHere()">Rescan</button>
   <span id="scanBadge" style="display:none;font-size:13px;font-weight:400;color:#888"><span class="spin" style="display:inline-block;width:12px;height:12px;border:2px solid #444;border-top-color:#236CFF;border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:-2px"></span> scanning…</span>
   <a id="newerLink" style="display:none;font-size:13px;color:#4ade80;margin-left:8px">Scan finished — view updated report →</a>
+  <label id="deepWrap" style="display:none;font-size:13px;font-weight:400;color:#ccc;margin-left:10px;cursor:pointer" title="Sweeps each screen in overlapping bands — catches subtle artwork, icon and placeholder changes. Slower, but far more thorough."><input type="checkbox" id="deepScan" style="vertical-align:-2px"> deep scan</label>
 </h1>
 <div id="links" style="margin:4px 0 8px"></div>
 <div id="summary" style="margin:0">Loading…</div>
@@ -95,6 +108,25 @@ $('share').onclick = async () => {
 };
 $('showExtras').onchange = () => window._report && render(window._report);
 $('showDismissed').onchange = () => window._report && (render(window._report), placeThumbs(window._report));
+// Condense on scroll via a sentinel ABOVE the header. Measuring scrollY here
+// would oscillate: condensing shortens the page, which shifts scrollY back
+// under the threshold, which expands it again (visible jitter). The sentinel's
+// document position is unaffected by the header's own size, so no feedback loop.
+// ESC closes whichever overlay is open: the side-by-side detail panel first,
+// then the side preview. (Fullscreen viewers handle their own ESC.)
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || document.fullscreenElement) return;
+  if ($('detail').style.display === 'block') { $('detail').style.display = 'none'; return; }
+  if ($('preview').style.display === 'block') {
+    $('preview').style.display = 'none';
+    $('divider').style.display = 'none';
+  }
+});
+
+new IntersectionObserver(
+  ([e]) => $('stickyHead').classList.toggle('condensed', !e.isIntersecting),
+  { threshold: 0 },
+).observe($('headSentinel'));
 const runId = location.pathname.split('/').pop();
 fetch('/api/report/' + runId).then(r => r.json()).then(render).catch(() => $('summary').textContent = 'Report not found');
 
@@ -156,7 +188,17 @@ function buildTimeline(r) {
   if (vid.dataset.loaded) { placeThumbs(r); return; }
   vid.dataset.loaded = '1';
   vid.src = r.video;
-  vid.addEventListener('loadedmetadata', () => { dur = vid.duration || 60; placeThumbs(r); });
+  vid.addEventListener('loadedmetadata', () => {
+    dur = vid.duration || 60;
+    placeThumbs(r);
+    // Always open in split view — a full-width video with no design beside it
+    // isn't useful. Lead with the first thing needing attention.
+    if (!$('preview').style.display || $('preview').style.display === 'none') {
+      const first = r.screens.find(s => s.verdict === 'mismatch' && !s.dismissed)
+        ?? r.screens.find(s => s.verdict !== 'match') ?? r.screens[0];
+      if (first) preview(first);
+    }
+  });
   vid.addEventListener('timeupdate', () => {
     $('playhead').style.left = (vid.currentTime / dur * 100) + '%';
   });
@@ -344,7 +386,7 @@ async function rescanHere() {
   $('rescanBtn').disabled = true; $('rescanBtn').textContent = 'Scanning…';
   $('rescanLog').style.display = 'block'; $('rescanLog').textContent = '';
   const resp = await fetch('/api/compare', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ figmaUrl: r.figmaUrl, frameioUrl: r.frameioUrl, demoName: r.name }) }).then(x => x.json());
+    body: JSON.stringify({ figmaUrl: r.figmaUrl, frameioUrl: r.frameioUrl, demoName: r.name, deep: $('deepScan').checked }) }).then(x => x.json());
   if (resp.error) { $('rescanLog').textContent = resp.error; $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan'; return; }
   const es = new EventSource('/api/progress/' + resp.runId);
   window._liveES = es;
@@ -392,7 +434,9 @@ async function pollActiveHere() {
     attachLive(es);
   }
   $('scanBadge').style.display = scanning ? 'inline-block' : 'none';
-  $('rescanBtn').style.display = scanning ? 'none' : (window._report?.figmaUrl && window._report?.frameioUrl ? 'inline-block' : 'none');
+  const canRescan = !scanning && window._report?.figmaUrl && window._report?.frameioUrl;
+  $('rescanBtn').style.display = canRescan ? 'inline-block' : 'none';
+  $('deepWrap').style.display = canRescan ? 'inline-block' : 'none';
   if (wasScanning && !scanning) {
     // A scan just finished — link to the fresh report if it's a newer run.
     const runs = await fetch('/api/runs').then(r => r.json()).catch(() => []);

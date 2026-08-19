@@ -10,7 +10,7 @@ import { MODEL } from './compare/judge.js';
 import { addScriptVersion } from './scripts.js';
 import { transcribeVideo } from './transcribe.js';
 
-export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, runId, onProgress = () => {}, onScreen = () => {} }) {
+export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, deep = false, runId, onProgress = () => {}, onScreen = () => {} }) {
   const triggeredAt = new Date().toISOString(); // scan/rescan trigger time, not completion
   const runDir = path.join('runs', runId);
   await fs.mkdir(runDir, { recursive: true });
@@ -62,7 +62,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
   const simMatches = await matchScreens(figmaFrames, videoFrames, { topK: 999, minScore: 0.3 });
   const web = p => p ? '/' + p.split(path.sep).join('/') : null;
   const judged = await selectAndJudge(simMatches, {
-    client, model: MODEL, runDir, anchors, onProgress,
+    client, model: MODEL, runDir, anchors, deep, onProgress,
     onScreen: (j, index, total) => onScreen({
       index, total,
       name: j.screen.name, verdict: j.verdict, differences: j.differences,
