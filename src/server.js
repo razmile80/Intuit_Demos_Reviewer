@@ -333,6 +333,35 @@ export function applyNotes(entry, list) {
   }
 }
 
+// ---- Video notes: anchored to a timestamp, not to a Figma screen. For shots
+// that exist in the video but have no design (e.g. a scene the client cut).
+app.get('/api/video-notes', async (req, res) => {
+  const notes = await loadNotes();
+  res.json((notes[req.query.name] ?? {}).__video ?? []);
+});
+
+app.post('/api/video-note', async (req, res) => {
+  try {
+    const { demoName, t, box, text, remove } = req.body;
+    if (!demoName) return res.status(400).json({ error: 'demoName required' });
+    const notes = await loadNotes();
+    const perDemo = notes[demoName] ?? (notes[demoName] = {});
+    const list = perDemo.__video ?? (perDemo.__video = []);
+    if (remove != null) list.splice(remove, 1);
+    else {
+      if (!text?.trim()) return res.status(400).json({ error: 'Note text required' });
+      list.push({ t: Number(t) || 0, box, text: text.trim(), date: new Date().toISOString() });
+      list.sort((a, b) => a.t - b.t);
+    }
+    if (!list.length) delete perDemo.__video;
+    await fs.mkdir('data', { recursive: true });
+    await fs.writeFile(NOTES_FILE, JSON.stringify(notes, null, 2));
+    res.json({ ok: true, notes: perDemo.__video ?? [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Reviewer timeline: pin a Figma screen to a video timestamp and re-judge it.
 app.post('/api/rejudge', async (req, res) => {
   try {

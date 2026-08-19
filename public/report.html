@@ -19,6 +19,15 @@
   .annobox.hot { border-color: #facc15; box-shadow: 0 0 12px rgba(250,204,21,0.7); }
   .annobox.manual { border-color: #fb923c; border-style: dashed; }
   .dvp.drawing { cursor: crosshair; }
+  /* The column currently open in the detail panel */
+  .col.active img { outline: 2px solid #236CFF; outline-offset: 2px; }
+  .col.active .meta { color: #60a5fa; }
+  /* Shrink the filmstrip while the detail panel is open so both fit on screen */
+  body.detailopen .col { min-width: 110px; }
+  body.detailopen .col img { width: 100px; }
+  body.detailopen .col .ghost { width: 100px; height: 170px; font-size: 10px; }
+  #detailNav button { background: #1e1e1e; border: 1px solid #444; color: #eee; border-radius: 6px; padding: 4px 14px; cursor: pointer; font-size: 13px; }
+  #detailNav button:disabled { opacity: 0.35; cursor: default; }
   #dDiffs li.manualnote { color: #fdba74; }
   button.notebtn { background: #7c2d12; border: 1px solid #9a3412; color: #fed7aa; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
   button.notebtn.active { background: #fb923c; color: #1c1917; font-weight: 600; }
@@ -61,7 +70,7 @@
 <label id="extrasToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer;margin-right:16px"><input type="checkbox" id="showExtras" style="vertical-align:-2px"> <span id="extrasLabel">Extras</span></label>
 <label id="dismissedToggle" style="display:none;font-size:13px;color:#ccc;cursor:pointer"><input type="checkbox" id="showDismissed" style="vertical-align:-2px"> <span id="dismissedLabel">Dismissed</span></label>
 <div id="strip"></div>
-<div id="detail"><button id="dClose" onclick="this.parentElement.style.display='none'">✕</button>
+<div id="detail"><button id="dClose" onclick="closeDetail()">✕</button>
   <div style="display:flex;gap:10px">
     <div class="dvp" id="dvpFigma" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">FIGMA</span><div class="zwrap"><img id="dFigma" draggable="false"><div class="boxlayer" id="dFigmaBoxes"></div></div></div>
     <div class="dvp" id="dvpVideo" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">VIDEO</span><div class="zwrap"><img id="dVideo" draggable="false"><div class="boxlayer" id="dVideoBoxes"></div></div></div>
@@ -69,6 +78,11 @@
   <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
     <button class="notebtn" id="noteBtn" onclick="toggleDraw()">✎ Add note</button>
     <span id="noteHint" style="font-size:12px;color:#888"></span>
+    <span id="detailNav" style="margin-left:auto;display:flex;align-items:center;gap:8px">
+      <button id="prevBtn" onclick="stepDetail(-1)">← Previous</button>
+      <span id="detailPos" style="font-size:12px;color:#888"></span>
+      <button id="nextBtn" onclick="stepDetail(1)">Next →</button>
+    </span>
   </div>
   <ul id="dDiffs"></ul>
 </div>
@@ -79,7 +93,16 @@
   </h2>
   <div style="display:flex;gap:20px;align-items:flex-start">
     <div style="flex:1;min-width:0">
-      <video id="vid" controls style="width:100%;border-radius:8px;background:#000"></video>
+      <div style="position:relative">
+        <video id="vid" controls style="width:100%;border-radius:8px;background:#000;display:block"></video>
+        <div id="vidBoxes" style="position:absolute;inset:0;pointer-events:none"></div>
+        <div id="vidOverlay" style="display:none;position:absolute;inset:0;cursor:crosshair;background:rgba(251,146,60,0.06)"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+        <button class="notebtn" id="vidNoteBtn" onclick="toggleVideoDraw()">✎ Note on video</button>
+        <span id="vidNoteHint" style="font-size:12px;color:#888"></span>
+      </div>
+      <ul id="vidNotes" style="list-style:none;padding:0;margin:8px 0 0;font-size:13px;color:#fdba74"></ul>
       <div id="track" style="position:relative;height:92px;margin-top:12px;border-top:1px solid #333">
         <div id="playhead" style="position:absolute;top:0;width:2px;height:100%;background:#2563eb;pointer-events:none"></div>
       </div>
@@ -124,8 +147,23 @@ $('showDismissed').onchange = () => window._report && (render(window._report), p
 // ESC closes whichever overlay is open: the side-by-side detail panel first,
 // then the side preview. (Fullscreen viewers handle their own ESC.)
 addEventListener('keydown', e => {
+  const typing = /INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '');
+  // Space plays/pauses the video from anywhere on the page (default is scroll).
+  if (e.code === 'Space' && !typing && $('vid')?.src) {
+    e.preventDefault();
+    $('vid').paused ? $('vid').play() : $('vid').pause();
+    return;
+  }
+  // Arrow keys step through screens while the detail panel is open.
+  if ($('detail').style.display === 'block' && !document.fullscreenElement
+      && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')
+      && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName ?? '')) {
+    e.preventDefault();
+    stepDetail(e.key === 'ArrowRight' ? 1 : -1);
+    return;
+  }
   if (e.key !== 'Escape' || document.fullscreenElement) return;
-  if ($('detail').style.display === 'block') { $('detail').style.display = 'none'; return; }
+  if ($('detail').style.display === 'block') { closeDetail(); return; }
   if ($('preview').style.display === 'block') {
     $('preview').style.display = 'none';
     $('divider').style.display = 'none';
@@ -153,7 +191,7 @@ function render(r) {
   $('rescanBtn').style.display = (r.figmaUrl && r.frameioUrl) ? 'inline-block' : 'none';
   demoName = r.name ?? r.runId;
   loadScript();
-  if (r.video) buildTimeline(r);
+  if (r.video) { buildTimeline(r); loadVideoNotes(); }
   if (r.script?.changes) {
     $('voChanges').style.display = 'block';
     $('voChanges').textContent = (r.script.source === 'transcript' ? '[auto-transcribed from video audio]\n\n' : '') + r.script.changes;
@@ -210,7 +248,9 @@ function buildTimeline(r) {
   });
   vid.addEventListener('timeupdate', () => {
     $('playhead').style.left = (vid.currentTime / dur * 100) + '%';
+    drawVideoBoxes();
   });
+  vid.addEventListener('seeked', drawVideoBoxes);
 }
 function placeThumbs(r) {
   const track = $('track');
@@ -485,6 +525,93 @@ async function dismiss(i, undo) {
   placeThumbs(window._report);
 }
 
+// ---- Notes anchored to the video timeline (shots with no Figma counterpart) ----
+let vidDraw = false, videoNotes = [];
+function toggleVideoDraw() {
+  vidDraw = !vidDraw;
+  $('vid').pause();
+  $('vidOverlay').style.display = vidDraw ? 'block' : 'none';
+  $('vidNoteBtn').classList.toggle('active', vidDraw);
+  $('vidNoteBtn').textContent = vidDraw ? '✎ Drag a box on the video' : '✎ Note on video';
+  $('vidNoteHint').textContent = vidDraw ? `Note will be pinned at ${fmt($('vid').currentTime)}` : '';
+}
+const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+
+$('vidOverlay').addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const r = $('vidOverlay').getBoundingClientRect();
+  const start = { x: e.clientX, y: e.clientY };
+  const ghost = document.createElement('div');
+  ghost.className = 'annobox manual';
+  ghost.style.cssText = 'position:fixed;z-index:40';
+  document.body.appendChild(ghost);
+  const move = ev => Object.assign(ghost.style, {
+    left: Math.min(start.x, ev.clientX) + 'px', top: Math.min(start.y, ev.clientY) + 'px',
+    width: Math.abs(ev.clientX - start.x) + 'px', height: Math.abs(ev.clientY - start.y) + 'px',
+  });
+  const up = async ev => {
+    removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+    ghost.remove();
+    const box = {
+      x: (Math.min(start.x, ev.clientX) - r.left) / r.width * 100,
+      y: (Math.min(start.y, ev.clientY) - r.top) / r.height * 100,
+      w: Math.abs(ev.clientX - start.x) / r.width * 100,
+      h: Math.abs(ev.clientY - start.y) / r.height * 100,
+    };
+    if (box.w < 1 || box.h < 1) return;
+    const text = prompt(`Note at ${fmt($('vid').currentTime)}:`);
+    if (!text) return;
+    const resp = await fetch('/api/video-note', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ demoName, t: $('vid').currentTime, box, text }) }).then(x => x.json());
+    if (resp.error) return alert(resp.error);
+    videoNotes = resp.notes;
+    toggleVideoDraw();
+    renderVideoNotes();
+  };
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', up);
+});
+
+// Show a note's box whenever the playhead sits near its timestamp.
+const NOTE_WINDOW = 1.5;
+function drawVideoBoxes() {
+  const t = $('vid').currentTime;
+  $('vidBoxes').innerHTML = videoNotes
+    .filter(n => Math.abs(n.t - t) <= NOTE_WINDOW && n.box)
+    .map(n => `<div class="annobox manual" style="left:${n.box.x}%;top:${n.box.y}%;width:${n.box.w}%;height:${n.box.h}%">
+        <span style="position:absolute;top:-20px;left:0;background:#fb923c;color:#1c1917;font-size:11px;font-weight:600;padding:1px 6px;border-radius:4px;white-space:nowrap">${n.text}</span>
+      </div>`).join('');
+}
+
+function renderVideoNotes() {
+  drawVideoBoxes();
+  $('vidNotes').innerHTML = videoNotes.map((n, i) =>
+    `<li style="padding:2px 0">✎ <a onclick="document.getElementById('vid').currentTime=${n.t}" style="color:#60a5fa;cursor:pointer">${fmt(n.t)}</a> — ${n.text}
+     <span onclick="removeVideoNote(${i})" style="cursor:pointer;color:#888;margin-left:6px" title="Delete">✕</span></li>`).join('');
+  // Markers on the timeline track.
+  $('track').querySelectorAll('.vidmark').forEach(el => el.remove());
+  videoNotes.forEach(n => {
+    const el = document.createElement('div');
+    el.className = 'vidmark';
+    el.title = n.text;
+    el.style.cssText = `position:absolute;bottom:0;left:${Math.min(99, n.t / dur * 100)}%;width:2px;height:22px;background:#fb923c`;
+    el.onclick = () => { $('vid').currentTime = n.t; };
+    $('track').appendChild(el);
+  });
+}
+async function removeVideoNote(i) {
+  const resp = await fetch('/api/video-note', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ demoName, remove: i }) }).then(x => x.json());
+  if (resp.error) return alert(resp.error);
+  videoNotes = resp.notes;
+  renderVideoNotes();
+}
+async function loadVideoNotes() {
+  if (!demoName) return;
+  videoNotes = await fetch('/api/video-notes?name=' + encodeURIComponent(demoName)).then(r => r.json()).catch(() => []);
+  renderVideoNotes();
+}
+
 function preview(sc) {
   window._previewName = sc.name;
   $('preview').style.display = 'block';
@@ -564,6 +691,25 @@ function detail(i) {
   setBoxes('dVideoBoxes', sc.differences, 'videoBox');
   wireDiffHover($('dDiffs'), ['dFigmaBoxes', 'dVideoBoxes']);
   $('detail').style.display = 'block';
+  document.body.classList.add('detailopen');
+  // Highlight the open column and keep it in view.
+  [...$('strip').children].forEach((el, j) => el.classList.toggle('active', j === i));
+  $('strip').children[i]?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  const visible = [...$('strip').children].filter(el => el.classList.contains('col') && !el.classList.contains('extra'));
+  $('prevBtn').disabled = i <= 0;
+  $('nextBtn').disabled = i >= window._report.screens.length - 1;
+  $('detailPos').textContent = `${i + 1} / ${window._report.screens.length}`;
   requestAnimationFrame(() => { dvFigma.fit(); dvVideo.fit(); });
+}
+
+function closeDetail() {
+  $('detail').style.display = 'none';
+  document.body.classList.remove('detailopen');
+  [...$('strip').children].forEach(el => el.classList.remove('active'));
+}
+
+function stepDetail(delta) {
+  const next = (window._detailIndex ?? 0) + delta;
+  if (next >= 0 && next < window._report.screens.length) detail(next);
 }
 </script></body></html>
