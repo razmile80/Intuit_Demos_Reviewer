@@ -25,7 +25,12 @@ export async function captureFigmaFramesApi(url, runDir, onProgress = () => {}) 
     root = r.document.children[0]; // first page
   }
 
-  const isAnnotation = n => /^[:.\s]+$/.test(n.name ?? '');
+  // Storyboards use "::::" frames as separators, but clients also leave REAL
+  // screens named ":::" — and dropping a real screen is invisible to the
+  // producer, while an extra one is a single click to dismiss. So only treat a
+  // punctuation-only name as decoration when the frame is small or empty.
+  const isAnnotation = n => /^[:.\s]+$/.test(n.name ?? '')
+    && ((n.absoluteBoundingBox?.height ?? 0) < 500 || !(n.children?.length));
   const containers = ['FRAME', 'COMPONENT', 'INSTANCE', 'SECTION', 'GROUP'];
   const visible = n => containers.includes(n.type) && !isAnnotation(n) && n.absoluteBoundingBox?.height > 100;
   // A demo screen can be mobile (portrait ~393x852) or desktop (landscape ~1440x1024+).
