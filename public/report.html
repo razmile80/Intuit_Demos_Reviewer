@@ -161,7 +161,6 @@ function render(r) {
   $('summary').textContent = s.live
     ? `scanning… ${r.screens.length}/${s.total} screens judged · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
     : `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
-      + (s.flagged ? ` · ${s.flagged} flagged ✎` : '')
       + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
   const nDismissed = r.screens.filter(s => s.dismissed).length;
@@ -173,7 +172,7 @@ function render(r) {
     <div class="col ${sc.dismissed ? 'dismissed-col' : ''}" onclick="detail(${i})">
       <div style="position:relative">${tag('Figma')}<img src="${sc.figmaPng}" loading="lazy"></div>
       ${sc.videoPng ? `<div style="position:relative">${tag('Video')}<img src="${sc.videoPng}" loading="lazy"></div>` : '<div class="ghost">Not found</div>'}
-      <div class="verdict ${sc.dismissed || sc.flagged ? '' : sc.verdict}" ${sc.dismissed ? 'style="color:#888"' : sc.flagged ? 'style="color:#fb923c"' : ''}>${sc.dismissed ? 'dismissed' : sc.flagged ? '✎ flagged' : sc.verdict.replace('_', ' ')}</div>
+      <div class="verdict ${sc.dismissed ? '' : sc.verdict}" ${sc.dismissed ? 'style="color:#888"' : ''}>${sc.dismissed ? 'dismissed' : sc.verdict.replace('_', ' ')}${sc.flagged ? ' ✎' : ''}</div>
       <div class="meta">${sc.name}${sc.timestamp !== null ? ' · ' + sc.timestamp.toFixed(1) + 's' : ''}</div>
       ${sc.verdict !== 'match' ? `<button class="dismissBtn" onclick="event.stopPropagation(); dismiss(${i}, ${!!sc.dismissed})">${sc.dismissed ? 'Restore' : 'Dismiss'}</button>` : ''}
     </div>`).join('') + ($('showExtras').checked ? r.extras.map(x => `
@@ -226,7 +225,7 @@ function placeThumbs(r) {
     el.style.cssText = 'position:absolute;top:8px;width:42px;cursor:grab;text-align:center;user-select:none';
     const t = sc.timestamp ?? (dur * i / r.screens.length);
     el.style.left = `calc(${Math.min(98, t / dur * 100)}% - 21px)`;
-    const col = sc.dismissed ? '#888' : sc.flagged ? '#fb923c' : (VCOL[sc.verdict] ?? '#555');
+    const col = sc.dismissed ? '#888' : (VCOL[sc.verdict] ?? '#555');
     el.innerHTML = `<img src="${sc.figmaPng}" draggable="false" style="width:42px;height:56px;object-fit:cover;object-position:top center;border-radius:3px;border:2px solid ${col};display:block;background:#111${sc.dismissed ? ';opacity:0.55' : ''}">
       <div style="font-size:10px;color:${col}">${(sc.timestamp ?? '?')}s${sc.anchored ? ' 📌' : ''}</div>`;
     el.title = sc.name + ' — drag to re-anchor, click to seek';
