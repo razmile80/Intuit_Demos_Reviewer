@@ -17,6 +17,11 @@
   .boxlayer { position: absolute; inset: 0; pointer-events: none; }
   .annobox { position: absolute; border: 3px solid #ef4444; border-radius: 3px; box-shadow: 0 0 0 1px rgba(0,0,0,0.5); }
   .annobox.hot { border-color: #facc15; box-shadow: 0 0 12px rgba(250,204,21,0.7); }
+  .annobox.manual { border-color: #fb923c; border-style: dashed; }
+  .dvp.drawing { cursor: crosshair; }
+  #dDiffs li.manualnote { color: #fdba74; }
+  button.notebtn { background: #7c2d12; border: 1px solid #9a3412; color: #fed7aa; border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+  button.notebtn.active { background: #fb923c; color: #1c1917; font-weight: 600; }
   /* Condensed header: shrinks on scroll so the video and timeline get the room. */
   /* No transitions here on purpose: animating layout properties (font-size,
      padding) on a sticky element that overlaps transformed content makes
@@ -60,6 +65,10 @@
   <div style="display:flex;gap:10px">
     <div class="dvp" id="dvpFigma" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">FIGMA</span><div class="zwrap"><img id="dFigma" draggable="false"><div class="boxlayer" id="dFigmaBoxes"></div></div></div>
     <div class="dvp" id="dvpVideo" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">VIDEO</span><div class="zwrap"><img id="dVideo" draggable="false"><div class="boxlayer" id="dVideoBoxes"></div></div></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+    <button class="notebtn" id="noteBtn" onclick="toggleDraw()">✎ Add note</button>
+    <span id="noteHint" style="font-size:12px;color:#888"></span>
   </div>
   <ul id="dDiffs"></ul>
 </div>
@@ -152,6 +161,7 @@ function render(r) {
   $('summary').textContent = s.live
     ? `scanning… ${r.screens.length}/${s.total} screens judged · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
     : `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
+      + (s.flagged ? ` · ${s.flagged} flagged ✎` : '')
       + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
   const nDismissed = r.screens.filter(s => s.dismissed).length;
@@ -163,7 +173,7 @@ function render(r) {
     <div class="col ${sc.dismissed ? 'dismissed-col' : ''}" onclick="detail(${i})">
       <div style="position:relative">${tag('Figma')}<img src="${sc.figmaPng}" loading="lazy"></div>
       ${sc.videoPng ? `<div style="position:relative">${tag('Video')}<img src="${sc.videoPng}" loading="lazy"></div>` : '<div class="ghost">Not found</div>'}
-      <div class="verdict ${sc.dismissed ? '' : sc.verdict}" ${sc.dismissed ? 'style="color:#888"' : ''}>${sc.dismissed ? 'dismissed' : sc.verdict.replace('_', ' ')}</div>
+      <div class="verdict ${sc.dismissed || sc.flagged ? '' : sc.verdict}" ${sc.dismissed ? 'style="color:#888"' : sc.flagged ? 'style="color:#fb923c"' : ''}>${sc.dismissed ? 'dismissed' : sc.flagged ? '✎ flagged' : sc.verdict.replace('_', ' ')}</div>
       <div class="meta">${sc.name}${sc.timestamp !== null ? ' · ' + sc.timestamp.toFixed(1) + 's' : ''}</div>
       ${sc.verdict !== 'match' ? `<button class="dismissBtn" onclick="event.stopPropagation(); dismiss(${i}, ${!!sc.dismissed})">${sc.dismissed ? 'Restore' : 'Dismiss'}</button>` : ''}
     </div>`).join('') + ($('showExtras').checked ? r.extras.map(x => `
@@ -216,7 +226,7 @@ function placeThumbs(r) {
     el.style.cssText = 'position:absolute;top:8px;width:42px;cursor:grab;text-align:center;user-select:none';
     const t = sc.timestamp ?? (dur * i / r.screens.length);
     el.style.left = `calc(${Math.min(98, t / dur * 100)}% - 21px)`;
-    const col = sc.dismissed ? '#888' : (VCOL[sc.verdict] ?? '#555');
+    const col = sc.dismissed ? '#888' : sc.flagged ? '#fb923c' : (VCOL[sc.verdict] ?? '#555');
     el.innerHTML = `<img src="${sc.figmaPng}" draggable="false" style="width:42px;height:56px;object-fit:cover;object-position:top center;border-radius:3px;border:2px solid ${col};display:block;background:#111${sc.dismissed ? ';opacity:0.55' : ''}">
       <div style="font-size:10px;color:${col}">${(sc.timestamp ?? '?')}s${sc.anchored ? ' 📌' : ''}</div>`;
     el.title = sc.name + ' — drag to re-anchor, click to seek';
@@ -317,7 +327,7 @@ function setBoxes(layerId, diffs, key) {
   $(layerId).innerHTML = (diffs ?? []).map((d, i) => {
     const b = typeof d === 'object' ? d[key] : null;
     if (!b || b.x == null) return '';
-    return `<div class="annobox" data-i="${i}" style="left:${scale(b.x)}%;top:${scale(b.y)}%;width:${Math.max(b.w ?? 2, 1.5)}%;height:${Math.max(b.h ?? 2, 1)}%"></div>`;
+    return `<div class="annobox${d.manual ? ' manual' : ''}" data-i="${i}" style="left:${scale(b.x)}%;top:${scale(b.y)}%;width:${Math.max(b.w ?? 2, 1.5)}%;height:${Math.max(b.h ?? 2, 1)}%"></div>`;
   }).join('');
 }
 function wireDiffHover(listEl, layerIds) {
@@ -396,6 +406,73 @@ async function rescanHere() {
     es.close(); window._liveES = null; $('rescanBtn').disabled = false; $('rescanBtn').textContent = 'Rescan';
   });
   attachLive(es);
+}
+
+// ---- Manual annotations: drag a box on either image, then type the note ----
+let drawMode = false;
+function toggleDraw() {
+  drawMode = !drawMode;
+  $('noteBtn').classList.toggle('active', drawMode);
+  $('noteBtn').textContent = drawMode ? '✎ Drawing — drag a box' : '✎ Add note';
+  $('noteHint').textContent = drawMode ? 'Drag across the area on either image, then type your note.' : '';
+  ['dvpFigma', 'dvpVideo'].forEach(id => $(id).classList.toggle('drawing', drawMode));
+}
+function wireDrawing(vpId, side) {
+  const vp = $(vpId);
+  vp.addEventListener('pointerdown', e => {
+    if (!drawMode) return;
+    e.stopPropagation(); e.preventDefault();
+    const img = vp.querySelector('img');
+    const r = img.getBoundingClientRect();
+    const start = { x: e.clientX, y: e.clientY };
+    const ghost = document.createElement('div');
+    ghost.className = 'annobox manual';
+    ghost.style.position = 'fixed';
+    ghost.style.zIndex = 40;
+    document.body.appendChild(ghost);
+    const move = ev => {
+      const x = Math.min(start.x, ev.clientX), y = Math.min(start.y, ev.clientY);
+      Object.assign(ghost.style, { left: x + 'px', top: y + 'px', width: Math.abs(ev.clientX - start.x) + 'px', height: Math.abs(ev.clientY - start.y) + 'px' });
+    };
+    const up = async ev => {
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up);
+      ghost.remove();
+      const box = {
+        x: (Math.min(start.x, ev.clientX) - r.left) / r.width * 100,
+        y: (Math.min(start.y, ev.clientY) - r.top) / r.height * 100,
+        w: Math.abs(ev.clientX - start.x) / r.width * 100,
+        h: Math.abs(ev.clientY - start.y) / r.height * 100,
+      };
+      if (box.w < 0.5 || box.h < 0.5) return; // ignore stray clicks
+      const text = prompt('Note for this area:');
+      if (!text) return;
+      const sc = window._report.screens[window._detailIndex];
+      const resp = await fetch('/api/note', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId: window._report.runId, screenIndex: window._detailIndex, screenName: sc.name, side, box, text }) }).then(x => x.json());
+      if (resp.error) return alert(resp.error);
+      Object.assign(sc, resp.screen);
+      Object.assign(window._report.summary, resp.summary);
+      toggleDraw();
+      const idx = window._detailIndex;
+      render(window._report); placeThumbs(window._report); detail(idx);
+      // Bring the annotated column into view so the note is obviously attached.
+      $('strip').children[idx]?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+  }, true);
+}
+wireDrawing('dvpFigma', 'figma');
+wireDrawing('dvpVideo', 'video');
+
+async function removeNote(noteIndex) {
+  const sc = window._report.screens[window._detailIndex];
+  const resp = await fetch('/api/note', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ runId: window._report.runId, screenIndex: window._detailIndex, screenName: sc.name, remove: noteIndex }) }).then(x => x.json());
+  if (resp.error) return alert(resp.error);
+  Object.assign(sc, resp.screen);
+  Object.assign(window._report.summary, resp.summary);
+  render(window._report); placeThumbs(window._report); detail(window._detailIndex);
 }
 
 async function dismiss(i, undo) {
@@ -480,7 +557,10 @@ function detail(i) {
   $('dFigma').src = sc.figmaPng;
   $('dvpVideo').style.display = sc.videoPng ? '' : 'none';
   if (sc.videoPng) $('dVideo').src = sc.videoPng;
-  $('dDiffs').innerHTML = sc.differences.map((d, j) => `<li data-i="${j}">${dtext(d)}</li>`).join('') || '<li style="color:#4ade80">No differences found</li>';
+  window._detailIndex = i;
+  $('dDiffs').innerHTML = sc.differences.map((d, j) => d.manual
+    ? `<li data-i="${j}" class="manualnote">✎ ${dtext(d)} <span onclick="removeNote(${d.noteIndex})" style="cursor:pointer;color:#888;margin-left:6px" title="Delete note">✕</span></li>`
+    : `<li data-i="${j}">${dtext(d)}</li>`).join('') || '<li style="color:#4ade80">No differences found</li>';
   setBoxes('dFigmaBoxes', sc.differences, 'figmaBox');
   setBoxes('dVideoBoxes', sc.differences, 'videoBox');
   wireDiffHover($('dDiffs'), ['dFigmaBoxes', 'dVideoBoxes']);

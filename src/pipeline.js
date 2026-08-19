@@ -109,6 +109,17 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
     sequence,
     script: await scriptPromise,
   };
+  // Manual reviewer notes persist across rescans and override the AI verdict.
+  try {
+    const notes = JSON.parse(await fs.readFile(path.join('data', 'notes.json'), 'utf8'))[name] ?? {};
+    const { applyNotes, noteKey, recount } = await import('./server.js');
+    report.screens.forEach((s, i) => {
+      const list = notes[noteKey(report.screens, i)];
+      if (list?.length) applyNotes(s, list);
+    });
+    recount(report);
+  } catch { /* no notes yet */ }
+
   await fs.writeFile(path.join(runDir, 'report.json'), JSON.stringify(report, null, 2));
   await saveStandaloneReport(report, runDir);
   // Disk hygiene: prune superseded runs so the volume doesn't fill up.

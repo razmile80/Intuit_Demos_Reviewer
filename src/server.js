@@ -250,6 +250,89 @@ app.post('/api/dismiss', async (req, res) => {
   }
 });
 
+// ---- Manual annotations: a reviewer's note+box overrides the AI verdict ----
+const NOTES_FILE = path.join('data', 'notes.json');
+async function loadNotes() {
+  try { return JSON.parse(await fs.readFile(NOTES_FILE, 'utf8')); } catch { return {}; }
+}
+
+app.post('/api/note', async (req, res) => {
+  try {
+    const { runId, screenIndex, screenName, side, box, text, remove } = req.body;
+    const safe = runId.replace(/[^a-z0-9-]/gi, '');
+    const file = path.join('runs', safe, 'report.json');
+    const report = JSON.parse(await fs.readFile(file, 'utf8'));
+    // Identify by POSITION: screen names are not unique (older reports, and
+    // clients reuse names), so name-matching attached notes to the wrong screen.
+    const entry = report.screens[screenIndex] ?? report.screens.find(s => s.name === screenName);
+    if (!entry) return res.status(404).json({ error: 'Screen not found' });
+
+    const notes = await loadNotes();
+    const perDemo = notes[report.name] ?? (notes[report.name] = {});
+    const key = noteKey(report.screens, report.screens.indexOf(entry));
+    const list = perDemo[key] ?? (perDemo[key] = []);
+
+    if (remove != null) {
+      list.splice(remove, 1);
+      entry.differences = entry.differences.filter(d => !d.manual || d.noteIndex !== remove);
+      entry.differences.forEach(d => { if (d.manual && d.noteIndex > remove) d.noteIndex--; });
+    } else {
+      if (!text?.trim()) return res.status(400).json({ error: 'Note text required' });
+      list.push({ side, box, text: text.trim(), date: new Date().toISOString() });
+    }
+    if (!list.length) delete perDemo[key];
+    await fs.mkdir('data', { recursive: true });
+    await fs.writeFile(NOTES_FILE, JSON.stringify(notes, null, 2));
+
+    applyNotes(entry, perDemo[key] ?? []);
+    recount(report);
+    await fs.writeFile(file, JSON.stringify(report, null, 2));
+    res.json({ ok: true, screen: entry, summary: report.summary });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// A stable per-screen key: name plus its occurrence number among same-named
+// screens, so duplicate names can't collide and notes still survive rescans.
+export function noteKey(screens, index) {
+  const name = screens[index]?.name ?? `#${index}`;
+  const occurrence = screens.slice(0, index).filter(s => s.name === name).length;
+  return occurrence ? `${name}#${occurrence}` : name;
+}
+
+// Recompute every verdict count together — updating one in isolation leaves
+// the summary inconsistent (e.g. a screen counted as both match and mismatch).
+export function recount(report) {
+  const s = report.screens;
+  report.summary.total = s.length;
+  report.summary.match = s.filter(x => x.verdict === 'match' && !x.dismissed).length;
+  report.summary.mismatch = s.filter(x => x.verdict === 'mismatch' && !x.dismissed).length;
+  report.summary.missing = s.filter(x => x.verdict === 'not_found' && !x.dismissed).length;
+  report.summary.flagged = s.filter(x => x.flagged).length;
+}
+
+// Merge a screen's manual notes into its differences (they always win over
+// the AI verdict — a human looked at it).
+export function applyNotes(entry, list) {
+  entry.differences = entry.differences.filter(d => !d.manual);
+  list.forEach((n, i) => entry.differences.push({
+    text: n.text, manual: true, noteIndex: i,
+    figmaBox: n.side === 'figma' ? n.box : undefined,
+    videoBox: n.side === 'video' ? n.box : undefined,
+  }));
+  if (list.length) {
+    entry.aiVerdict ??= entry.verdict; // remember the AI's call so it can be restored
+    entry.verdict = 'mismatch';
+    entry.dismissed = false;
+    entry.flagged = true;
+  } else if (entry.flagged) {
+    entry.verdict = entry.aiVerdict ?? entry.verdict; // last note removed → back to the AI verdict
+    delete entry.aiVerdict;
+    entry.flagged = false;
+  }
+}
+
 // Reviewer timeline: pin a Figma screen to a video timestamp and re-judge it.
 app.post('/api/rejudge', async (req, res) => {
   try {
