@@ -199,7 +199,8 @@ function render(r) {
   $('summary').textContent = s.live
     ? `scanning… ${r.screens.length}/${s.total} screens judged · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
     : `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
-      + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`;
+      + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`
+      + (s.collapsed ? '  ⚠ pairing unreliable — several screens matched the same moment; drag one to the right time and rescan' : '');
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
   const nDismissed = r.screens.filter(s => s.dismissed).length;
   if (nDismissed) {

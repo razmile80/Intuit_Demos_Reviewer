@@ -80,9 +80,13 @@ export async function selectAndJudge(simMatches, { client, model, runDir, anchor
     // that window, similarity ranking has few look-alike competitors, so the
     // true frame reliably makes the shortlist (global similarity ranking does
     // not — every scroll position of a desktop page looks alike).
-    let candidates = m.candidates.filter(c => c.frame.timestamp >= lastTs - 2);
-    if (candidates.length === 0) candidates = m.candidates;
-    candidates = candidates.slice(0, 12);
+    // Forward-window candidates, PLUS a few from the whole video. Without the
+    // global escape hatch, one bad early pairing traps every later screen in
+    // the tail of the video and they all collapse onto the same moments.
+    const windowed = m.candidates.filter(c => c.frame.timestamp >= lastTs - 2).slice(0, 9);
+    const global = m.candidates.filter(c => !windowed.includes(c)).slice(0, 3);
+    let candidates = [...windowed, ...global];
+    if (candidates.length === 0) candidates = m.candidates.slice(0, 12);
     if (candidates.length === 0) {
       await push({ screen, matchedFrame: null, verdict: 'not_found', differences: [] }, i);
       continue;

@@ -78,6 +78,14 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
   const sequence = sequenceCheck(judged.filter(j => j.verdict === 'match' || j.verdict === 'mismatch'));
   const extras = findExtras(videoFrames, judged);
 
+  // Health check: many screens landing on the same moment means the pairing
+  // collapsed (usually a bad first match dragging the rest along). Surface it
+  // rather than reporting a wall of false mismatches as if they were real.
+  const stamps = judged.filter(j => j.matchedFrame).map(j => j.matchedFrame.timestamp);
+  const worst = Math.max(0, ...Object.values(stamps.reduce((acc, t) => (acc[t] = (acc[t] ?? 0) + 1, acc), {})));
+  const collapsed = stamps.length >= 5 && worst >= Math.max(3, stamps.length * 0.3);
+  if (collapsed) onProgress(`⚠ Pairing looks unreliable: ${worst} screens matched the same moment — drag a thumbnail to the correct time and rescan.`);
+
   let timeline = [];
   try {
     timeline = JSON.parse(await fs.readFile(path.join(runDir, 'frames.json'), 'utf8'))
@@ -98,6 +106,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
       missing: judged.filter(j => j.verdict === 'not_found' && !j.dismissed).length,
       errors: judged.filter(j => j.verdict === 'error').length,
       orderOk: sequence.ok,
+      collapsed,
     },
     screens: judged.map(j => ({
       name: j.screen.name, verdict: j.verdict, differences: j.differences, anchored: j.anchored ?? false, dismissed: j.dismissed ?? false,
