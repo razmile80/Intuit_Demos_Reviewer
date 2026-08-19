@@ -4,7 +4,7 @@ import { captureFigmaFrames } from './capture/figma.js';
 import { captureFigmaFramesApi } from './capture/figma-api.js';
 import { downloadVideo, extractFrames } from './capture/video.js';
 import Anthropic from '@anthropic-ai/sdk';
-import { matchScreens, sequenceCheck, findExtras } from './compare/match.js';
+import { matchScreens, sequenceCheck, findExtras, dedupeExtras } from './compare/match.js';
 import { selectAndJudge } from './compare/select.js';
 import { MODEL } from './compare/judge.js';
 import { addScriptVersion } from './scripts.js';
@@ -76,7 +76,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
     if (j.verdict === 'not_found' && j.screen.name in dismissals) j.dismissed = true;
   }
   const sequence = sequenceCheck(judged.filter(j => j.verdict === 'match' || j.verdict === 'mismatch'));
-  const extras = findExtras(videoFrames, judged);
+  const extras = await dedupeExtras(findExtras(videoFrames, judged));
 
   // Health check: many screens landing on the same moment means the pairing
   // collapsed (usually a bad first match dragging the rest along). Surface it
@@ -114,7 +114,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
       videoPng: web(j.matchedFrame?.croppedPath ?? j.matchedFrame?.pngPath),
       timestamp: j.matchedFrame?.timestamp ?? null,
     })),
-    extras: extras.slice(0, 12).map(f => ({ videoPng: web(f.croppedPath ?? f.pngPath), timestamp: f.timestamp })),
+    extras: extras.slice(0, 20).map(f => ({ videoPng: web(f.croppedPath ?? f.pngPath), timestamp: f.timestamp })),
     sequence,
     script: await scriptPromise,
   };
