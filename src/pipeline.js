@@ -75,7 +75,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
   for (const j of judged) {
     if (j.verdict === 'not_found' && j.screen.name in dismissals) j.dismissed = true;
   }
-  const sequence = sequenceCheck(judged.filter(j => j.verdict === 'match' || j.verdict === 'mismatch'));
+  const sequence = sequenceCheck(judged.filter(j => !j.dismissed && (j.verdict === 'match' || j.verdict === 'mismatch')));
   const extras = await dedupeExtras(findExtras(videoFrames, judged));
 
   // Health check: many screens landing on the same moment means the pairing

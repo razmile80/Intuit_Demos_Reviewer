@@ -231,8 +231,7 @@ app.post('/api/dismiss', async (req, res) => {
     const entry = report.screens.find(s => s.name === screenName);
     if (!entry) return res.status(404).json({ error: 'Screen not found' });
     entry.dismissed = !undo;
-    report.summary.mismatch = report.screens.filter(s => s.verdict === 'mismatch' && !s.dismissed).length;
-    report.summary.missing = report.screens.filter(s => s.verdict === 'not_found' && !s.dismissed).length;
+    recount(report); // single source of truth for every count, incl. order
     await fs.writeFile(file, JSON.stringify(report, null, 2));
 
     let dismissals = {};
@@ -311,6 +310,15 @@ export function recount(report) {
   report.summary.missing = s.filter(x => x.verdict === 'not_found' && !x.dismissed).length;
   report.summary.flagged = s.filter(x => x.flagged).length;
   report.summary.extras = (report.extras ?? []).filter(x => !x.dismissed).length;
+  // Order is judged on the screens still in play: a dismissed screen sitting
+  // at an odd timestamp shouldn't keep flagging the demo as out of order.
+  let prev = -Infinity, ok = true;
+  for (const x of s) {
+    if (x.dismissed || x.timestamp == null) continue;
+    if (x.timestamp < prev) { ok = false; break; }
+    prev = x.timestamp;
+  }
+  report.summary.orderOk = ok;
 }
 
 // Merge a screen's manual notes into its differences (they always win over
