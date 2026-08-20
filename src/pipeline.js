@@ -72,8 +72,11 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
       timestamp: j.matchedFrame?.timestamp ?? null,
     }),
   });
+  // Restore prior dismissals for ANY non-matching verdict, not just not_found —
+  // otherwise a dismissed mismatch comes back on every rescan and keeps
+  // breaking the order check.
   for (const j of judged) {
-    if (j.verdict === 'not_found' && j.screen.name in dismissals) j.dismissed = true;
+    if (j.verdict !== 'match' && j.screen.name in dismissals) j.dismissed = true;
   }
   const sequence = sequenceCheck(judged.filter(j => !j.dismissed && (j.verdict === 'match' || j.verdict === 'mismatch')));
   const extras = await dedupeExtras(findExtras(videoFrames, judged));
@@ -123,15 +126,16 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
     script: await scriptPromise,
   };
   // Manual reviewer notes persist across rescans and override the AI verdict.
+  const { applyNotes, noteKey, recount } = await import('./server.js');
   try {
     const notes = JSON.parse(await fs.readFile(path.join('data', 'notes.json'), 'utf8'))[name] ?? {};
-    const { applyNotes, noteKey, recount } = await import('./server.js');
     report.screens.forEach((s, i) => {
       const list = notes[noteKey(report.screens, i)];
       if (list?.length) applyNotes(s, list);
     });
-    recount(report);
   } catch { /* no notes yet */ }
+  // Always recount — the inline summary above doesn't account for dismissals.
+  recount(report);
 
   await fs.writeFile(path.join(runDir, 'report.json'), JSON.stringify(report, null, 2));
   await saveStandaloneReport(report, runDir);
