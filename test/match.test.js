@@ -16,7 +16,15 @@ test('matchScreens pairs each screen with its lookalike frame', async () => {
   assert.equal(m[1].candidates[0].frame.timestamp, 1);
 });
 
-test('sequenceCheck flags decreasing timestamps', () => {
+test('sequenceCheck tolerates small backward jitter', () => {
+  const judged = [
+    { screen: { name: 'S1' }, matchedFrame: { timestamp: 10 } },
+    { screen: { name: 'S2' }, matchedFrame: { timestamp: 8.5 } }, // within tolerance
+  ];
+  assert.equal(sequenceCheck(judged).ok, true);
+});
+
+test('sequenceCheck flags a real jump backwards', () => {
   const judged = [
     { screen: { name: 'S1' }, matchedFrame: { timestamp: 10 } },
     { screen: { name: 'S2' }, matchedFrame: { timestamp: 4 } },

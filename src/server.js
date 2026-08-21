@@ -313,10 +313,11 @@ export function recount(report) {
   // Order is judged on the screens still in play: a dismissed screen sitting
   // at an odd timestamp shouldn't keep flagging the demo as out of order.
   let prev = -Infinity, ok = true;
+  const TOLERANCE = 3; // seconds — matches sequenceCheck in compare/match.js
   for (const x of s) {
     if (x.dismissed || x.timestamp == null) continue;
-    if (x.timestamp < prev) { ok = false; break; }
-    prev = x.timestamp;
+    if (x.timestamp < prev - TOLERANCE) { ok = false; break; }
+    prev = Math.max(prev, x.timestamp);
   }
   report.summary.orderOk = ok;
 }

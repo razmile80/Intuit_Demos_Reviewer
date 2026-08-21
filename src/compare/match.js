@@ -19,12 +19,16 @@ export async function matchScreens(figmaFrames, videoFrames, { topK = 3, minScor
   return results;
 }
 
-export function sequenceCheck(judged) {
+// Screens matched a moment or two "early" are pairing noise (two screens can
+// legitimately land on the same beat), not a re-edited storyboard. Only a
+// meaningful jump backwards counts as a real order problem.
+export const ORDER_TOLERANCE = 3;
+export function sequenceCheck(judged, { tolerance = ORDER_TOLERANCE } = {}) {
   const violations = [];
   let prev = -Infinity;
   for (const { screen, matchedFrame } of judged) {
     if (!matchedFrame) continue;
-    if (matchedFrame.timestamp < prev) {
+    if (matchedFrame.timestamp < prev - tolerance) {
       violations.push({ screenName: screen.name, timestamp: matchedFrame.timestamp, prevTimestamp: prev });
     }
     prev = Math.max(prev, matchedFrame.timestamp);

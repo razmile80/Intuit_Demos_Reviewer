@@ -201,7 +201,8 @@ function render(r) {
     ? `scanning… ${r.screens.length}/${s.total} screens judged · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
     : `${s.total} screens · ${s.match} match · ${s.mismatch} mismatch · ${s.missing} missing`
       + (s.extras ? ` · ${s.extras} potential Figma update${s.extras > 1 ? 's' : ''}` : '')
-      + (s.errors ? ` · ${s.errors} errors` : '') + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗'}`
+      + (s.errors ? ` · ${s.errors} errors` : '')
+      + ` · order ${s.orderOk ? 'OK ✓' : 'BROKEN ✗' + (r.sequence?.violations?.length ? ` (${r.sequence.violations.map(v => v.screenName).join(', ')})` : '')}`
       + (s.collapsed ? '  ⚠ pairing unreliable — several screens matched the same moment; drag one to the right time and rescan' : '');
   const tag = label => `<span style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,0.6);color:#ccc;font-size:9px;padding:1px 6px;border-radius:4px;letter-spacing:0.5px;text-transform:uppercase">${label}</span>`;
   const nDismissed = r.screens.filter(s => s.dismissed).length + (r.extras ?? []).filter(x => x.dismissed).length;
