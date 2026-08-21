@@ -61,31 +61,28 @@ test('collectScreens: flat multi-row storyboard (screens are direct siblings, no
   assert.deepEqual(order, ['Health-1', 'Health-2', 'Health-3', 'Bench-1', 'Bench-2', 'Credit-1', 'Credit-2', 'Credit-3']);
 });
 
-test('collectScreens: a narrow (screen-shaped) 2-screen section wrapper is opened, not fused into one screen', () => {
-  // 2 screens side by side lands the wrapper itself at a screen-like aspect
-  // ratio (width/height <= 3) — old code would swallow the whole wrapper as
-  // ONE fake screen. Having 2+ screen-shaped children must win instead.
-  const secA = section('Section A', 0, 0, [screen('A-2', 850, 0), screen('A-1', 0, 0)], { width: 1700, height: 950 });
-  assert.deepEqual(collectScreens([secA]).map(n => n.name), ['A-1', 'A-2']);
+test('collectScreens: a screen is NEVER opened, however screen-shaped its own children are', () => {
+  // Regression: real geometry from the 11_IAS Agent Studio storyboard. Every
+  // one of these children passes isScreen (height >= 500, w/h <= 3) on its
+  // own — the icon rail is 69px wide, the texture layer is WIDER than the
+  // screen that contains it. Opening the screen to look at them is what
+  // turned 17 real screens into 46 fragments in production.
+  const rail = screen('Group 2147237080', 20, 30, { width: 69, height: 834 });
+  const content = screen('Content', 100, 10, { width: 1360, height: 1279 });
+  const texture = screen('texture', -150, -70, { width: 1736, height: 1046 });
+  const real = section('01 - Default: Clients (View by Agents)', 0, 0, [rail, content, texture],
+    { width: 1440, height: 900 });
+  assert.deepEqual(collectScreens([real]).map(n => n.name), ['01 - Default: Clients (View by Agents)']);
 });
 
-test('collectScreens: a wide (strip-shaped) many-screen section wrapper is opened, not dropped', () => {
-  // 8 screens side by side makes the wrapper read as an ultra-wide "strip" —
-  // old code refused to recurse into strips at all, silently losing the row.
-  const children = Array.from({ length: 8 }, (_, i) => screen(`Credit-${i + 1}`, i * 850, 0));
-  const secB = section('Pre-Qualified Line of Credit', 0, 0, children, { width: 8 * 850, height: 950 });
-  assert.deepEqual(collectScreens([secB]).map(n => n.name), children.map(c => c.name));
-});
-
-test('collectScreens: named section containers never get their screens interleaved with a sibling section', () => {
-  // Two sections whose screens are nested one level down. Section B's row is
-  // deliberately made to vertically overlap section A's row once flattened
-  // (A's screens run y=0..950, B's start at y=900 — real overlap) to prove
-  // hierarchy, not just geometry, is what keeps sections from crossing.
-  const secA = section('Section A', 0, 0, [screen('A-2', 850, 0), screen('A-1', 0, 0)], { width: 1700, height: 950 });
-  const secB = section('Section B', 0, 900, [screen('B-1', 0, 900), screen('B-2', 850, 900)], { width: 1700, height: 950 });
-  const order = collectScreens([secB, secA]).map(n => n.name); // note: passed out of visual order too
-  assert.deepEqual(order, ['A-1', 'A-2', 'B-1', 'B-2']);
+test('collectScreens: several sibling desktop screens each stay whole and in order', () => {
+  // The layout that actually exists in these storyboards: screens as siblings,
+  // each one a frame full of screen-shaped panels. All must survive intact.
+  const mk = (name, x) => section(name, x, 0,
+    [screen('rail', x + 20, 30, { width: 69, height: 834 }), screen('Content', x + 100, 10, { width: 1360, height: 1279 })],
+    { width: 1440, height: 900 });
+  const order = collectScreens([mk('C', 3200), mk('A', 0), mk('B', 1600)]).map(n => n.name);
+  assert.deepEqual(order, ['A', 'B', 'C']);
 });
 
 test('collectScreens: drops opacity < 0.9 and invisible screens, keeps ordering for the rest', () => {

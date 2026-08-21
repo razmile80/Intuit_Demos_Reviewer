@@ -66,23 +66,20 @@ export function collectScreens(nodes, depth = 0, out = []) {
     // Washed-out screens (opacity < 90%) are the client's way of marking
     // them "out" — skip them and everything inside them.
     if ((n.opacity ?? 1) < 0.9 || n.visible === false) continue;
-    // A named row/section (e.g. "Benchmarking") holding several full-size
-    // screens is, by shape alone, indistinguishable from either a single
-    // screen (2-3 screens side by side can land at a screen-like aspect
-    // ratio) or an ultra-wide storyboard strip (4+ screens easily exceed
-    // it) — isScreen/isStrip would either fuse it into one wrong render or
-    // silently drop the whole row. So check the actual children first: 2+
-    // of them being screen-shaped is a much stronger signal that this is a
-    // wrapper to open, not a screen or an opaque strip to skip — and it
-    // wins regardless of the wrapper's own aspect ratio.
-    const screenChildren = (n.children ?? []).filter(c => c.absoluteBoundingBox && isScreen(c));
-    if (screenChildren.length >= 2) {
-      if (depth < 2) collectScreens(n.children, depth + 1, out);
-    } else if (isScreen(n)) {
-      out.push(n);
-    } else if (depth < 2 && n.children?.length && !isStrip(n)) {
-      collectScreens(n.children, depth + 1, out);
-    }
+    // Once a node is screen-shaped it IS the screen — never look inside it.
+    // Every real 1440x900 desktop screen is full of children that are
+    // themselves "screen-shaped" under any size/ratio test: a 69x834 icon
+    // rail, a 1360x1279 content column, a 1736x1046 background texture
+    // bleeding past the frame edge. Descending into a screen on the strength
+    // of its children — an earlier attempt at recognising section wrappers —
+    // turned one storyboard's 17 real screens into 46 fragments named
+    // "texture", "Background" and "Group 2147237080". Shape alone genuinely
+    // cannot tell a wrapper-of-screens from a screen-full-of-panels, so
+    // trust whichever node matches first and stop there. A wrapper that does
+    // hold screens is therefore rendered fused (visibly wrong, one glance to
+    // spot) rather than exploded into parts (silently wrong, 46 rows deep).
+    if (isScreen(n)) out.push(n);
+    else if (depth < 2 && n.children?.length && !isStrip(n)) collectScreens(n.children, depth + 1, out);
   }
   return out;
 }
