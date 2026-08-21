@@ -392,7 +392,11 @@ app.post('/api/dismiss-extra', async (req, res) => {
     await fs.mkdir('data', { recursive: true });
     await fs.writeFile(path.join('data', 'dismissals.json'), JSON.stringify(dismissals, null, 2));
 
-    report.summary.extras = report.extras.filter(x => !x.dismissed).length;
+    recount(report); // keep this in lockstep with /api/dismiss and /api/note —
+    // dismissing an extra can't change match/mismatch/missing/order (recount
+    // only looks at report.screens for those), but it's the single source of
+    // truth for summary.extras, and a bare field patch here is exactly how
+    // this handler quietly drifted out of sync with the other two before.
     await fs.writeFile(file, JSON.stringify(report, null, 2));
     res.json({ ok: true, summary: report.summary, dismissed: ex.dismissed });
   } catch (e) {
