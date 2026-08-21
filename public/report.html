@@ -19,7 +19,8 @@
   .annobox.hot { border-color: #facc15; box-shadow: 0 0 12px rgba(250,204,21,0.7); }
   .annobox.manual { border-color: #fb923c; border-style: dashed; }
   .dvp.drawing { cursor: crosshair; }
-  /* The column currently open in the detail panel */
+  /* The selected screen, whether it was picked in the filmstrip or on the
+     video timeline below — the two views mirror each other. */
   .col.active img { outline: 2px solid #236CFF; outline-offset: 2px; }
   .col.active .meta { color: #60a5fa; }
   /* Shrink the filmstrip while the detail panel is open so both fit on screen */
@@ -262,6 +263,11 @@ function render(r) {
     $('extrasToggle').style.display = 'inline-block';
     $('extrasLabel').textContent = `Extras (${r.extras.length})`;
   }
+  // render() rebuilds the strip from scratch, which drops the selection
+  // highlight with it — re-apply it, or a dismiss / note / re-anchor silently
+  // desyncs the filmstrip from the timeline and the detail panel.
+  const sel = window._selectedScreen ?? null;
+  if (sel !== null) $('strip').querySelector(`[data-screen="${sel}"]`)?.classList.add('active');
   window._report = r;
 }
 
@@ -324,19 +330,44 @@ function placeExtraZones(r) {
   }
 }
 
+// Would the timeline's own filters hide this screen's thumb?
+function thumbFiltered(sc) {
+  return (!$('showMatches').checked && sc.verdict === 'match')
+    || (sc.dismissed && !$('showDismissedTl').checked);
+}
+
+// ONE selected screen, mirrored in both views — the filmstrip column up top and
+// the thumb on the video timeline. Either view can start a selection (click a
+// column, or click a thumb while scrubbing), so this is the single place that
+// moves the highlight, and neither view has to know which one was clicked.
+function selectScreen(i) {
+  const prev = window._selectedScreen ?? null;
+  window._selectedScreen = i;
+  [...$('strip').children].forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
+  $('strip').querySelector(`[data-screen="${i}"]`)?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  if (!window._report?.video) return;
+  const track = $('track');
+  const target = track.querySelector(`.thumb[data-screen="${i}"]`);
+  const prevWasForced = prev !== null && prev !== i
+    && window._report.screens[prev] && thumbFiltered(window._report.screens[prev]);
+  // Rebuild only when the SET of visible thumbs has to change: the new
+  // selection may be filtered out (force it in) or the old one may have been
+  // forced in (drop it again). Otherwise just move the class — rebuilding here
+  // would tear down the very thumb whose click we are still inside of.
+  if (!target || prevWasForced) placeThumbs(window._report);
+  else track.querySelectorAll('.thumb').forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
+}
+
 function placeThumbs(r) {
   const track = $('track');
   track.querySelectorAll('.thumb').forEach(el => el.remove());
   placeExtraZones(r);
-  const showMatches = $('showMatches').checked;
-  const showDismissedTl = $('showDismissedTl').checked;
   const selected = window._selectedScreen ?? null;
   r.screens.forEach((sc, i) => {
     // The selected screen always gets a thumb, even when these filters would
     // hide it — otherwise "show me the screen I picked" silently does nothing
     // whenever that screen happens to be a match and matches are hidden.
-    const hidden = (!showMatches && sc.verdict === 'match') || (sc.dismissed && !showDismissedTl);
-    if (hidden && i !== selected) return;
+    if (thumbFiltered(sc) && i !== selected) return;
     const el = document.createElement('div');
     el.className = 'thumb' + (i === selected ? ' active' : '');
     el.dataset.screen = i;
@@ -361,7 +392,16 @@ function placeThumbs(r) {
     el.addEventListener('pointerup', async e => {
       const wasDrag = moved; startX = null; moved = false;
       const rect = track.getBoundingClientRect();
-      if (!wasDrag) { $('vid').currentTime = (sc.timestamp ?? 0); preview(sc); return; }
+      if (!wasDrag) {
+        $('vid').currentTime = (sc.timestamp ?? 0);
+        preview(sc);
+        // Mirror the pick back up into the filmstrip. When the detail panel is
+        // open, move IT to this screen too — otherwise the panel would sit on
+        // one screen while the highlight points at another.
+        if (document.body.classList.contains('detailopen')) detail(i);
+        else selectScreen(i);
+        return;
+      }
       const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
       const ts = Math.round(x / rect.width * dur * 2) / 2;
       $('rejudgeStatus').textContent = `Re-judging "${sc.name}" at ${ts}s…`;
@@ -785,14 +825,8 @@ function detail(i) {
   wireDiffHover($('dDiffs'), ['dFigmaBoxes', 'dVideoBoxes']);
   $('detail').style.display = 'block';
   document.body.classList.add('detailopen');
-  // Highlight the open column and keep it in view.
-  [...$('strip').children].forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
-  $('strip').querySelector(`[data-screen="${i}"]`)?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
-  // Mirror the selection onto the video timeline. Re-place rather than just
-  // re-classing: the previous selection may have been force-shown past the
-  // filters, and that thumb has to disappear again as the selection moves.
-  window._selectedScreen = i;
-  if (window._report.video) placeThumbs(window._report);
+  // Highlight the open column, keep it in view, mirror onto the timeline.
+  selectScreen(i);
   $('prevBtn').disabled = i <= 0;
   $('nextBtn').disabled = i >= window._report.screens.length - 1;
   $('detailPos').textContent = `${i + 1} / ${window._report.screens.length}`;
