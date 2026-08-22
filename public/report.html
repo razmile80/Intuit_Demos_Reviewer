@@ -84,8 +84,8 @@
 <div id="strip"></div>
 <div id="detail"><button id="dClose" onclick="closeDetail()">✕</button>
   <div style="display:flex;gap:10px">
-    <div class="dvp" id="dvpFigma" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">FIGMA</span><div class="zwrap"><img id="dFigma" draggable="false"><div class="boxlayer" id="dFigmaBoxes"></div></div></div>
-    <div class="dvp" id="dvpVideo" title="Scroll to zoom · drag to pan · double-click to fit"><span class="vtag">VIDEO</span><div class="zwrap"><img id="dVideo" draggable="false"><div class="boxlayer" id="dVideoBoxes"></div></div></div>
+    <div class="dvp" id="dvpFigma" title="Drag to pan · double-click to fit"><span class="vtag">FIGMA</span><div class="zwrap"><img id="dFigma" draggable="false"><div class="boxlayer" id="dFigmaBoxes"></div></div></div>
+    <div class="dvp" id="dvpVideo" title="Drag to pan · double-click to fit"><span class="vtag">VIDEO</span><div class="zwrap"><img id="dVideo" draggable="false"><div class="boxlayer" id="dVideoBoxes"></div></div></div>
   </div>
   <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
     <button class="notebtn" id="noteBtn" onclick="toggleDraw()">✎ Add note</button>
@@ -100,7 +100,7 @@
 </div>
 <div id="reviewer" style="display:none;margin-top:40px">
   <h2 style="font-weight:600;font-size:18px">Timeline review <span style="color:#888;font-size:13px;font-weight:400">— click a design to preview it; drag it onto the moment it belongs to and I'll re-judge it there</span>
-    <label style="font-size:13px;font-weight:400;color:#ccc;margin-left:16px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="showMatches" checked style="vertical-align:-2px"> show matches</label>
+    <label style="font-size:13px;font-weight:400;color:#ccc;margin-left:16px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="showMatches" style="vertical-align:-2px"> show matches</label>
     <label style="font-size:13px;font-weight:400;color:#ccc;margin-left:12px;cursor:pointer;white-space:nowrap"><input type="checkbox" id="showDismissedTl" style="vertical-align:-2px"> dismissed</label>
   </h2>
   <div style="display:flex;gap:20px;align-items:flex-start">
@@ -341,7 +341,6 @@ function thumbFiltered(sc) {
 // column, or click a thumb while scrubbing), so this is the single place that
 // moves the highlight, and neither view has to know which one was clicked.
 function selectScreen(i, { scrollPage = true } = {}) {
-  const prev = window._selectedScreen ?? null;
   window._selectedScreen = i;
   [...$('strip').children].forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
   // Reveal the highlighted column — but a selection made DOWN on the video
@@ -355,17 +354,14 @@ function selectScreen(i, { scrollPage = true } = {}) {
     const strip = $('strip'), sr = strip.getBoundingClientRect(), cr = col.getBoundingClientRect();
     strip.scrollTo({ left: strip.scrollLeft + (cr.left - sr.left) - (sr.width - cr.width) / 2, behavior: 'smooth' });
   }
-  if (!window._report?.video) return;
-  const track = $('track');
-  const target = track.querySelector(`.thumb[data-screen="${i}"]`);
-  const prevWasForced = prev !== null && prev !== i
-    && window._report.screens[prev] && thumbFiltered(window._report.screens[prev]);
-  // Rebuild only when the SET of visible thumbs has to change: the new
-  // selection may be filtered out (force it in) or the old one may have been
-  // forced in (drop it again). Otherwise just move the class — rebuilding here
-  // would tear down the very thumb whose click we are still inside of.
-  if (!target || prevWasForced) placeThumbs(window._report);
-  else track.querySelectorAll('.thumb').forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
+  // The timeline's checkboxes decide what is on the track, absolutely. A
+  // dismissed screen — or a match while matches are hidden — has no thumb, so
+  // there is simply nothing to highlight there. This used to force the selected
+  // screen onto the track regardless, which put dismissed screens back on the
+  // timeline with the "dismissed" box unticked: exactly what that box exists to
+  // prevent. Moving a class is also all this needs to do, so it can never tear
+  // down the thumb whose own click we are still inside of.
+  $('track').querySelectorAll('.thumb').forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
 }
 
 function placeThumbs(r) {
@@ -374,10 +370,7 @@ function placeThumbs(r) {
   placeExtraZones(r);
   const selected = window._selectedScreen ?? null;
   r.screens.forEach((sc, i) => {
-    // The selected screen always gets a thumb, even when these filters would
-    // hide it — otherwise "show me the screen I picked" silently does nothing
-    // whenever that screen happens to be a match and matches are hidden.
-    if (thumbFiltered(sc) && i !== selected) return;
+    if (thumbFiltered(sc)) return;
     const el = document.createElement('div');
     el.className = 'thumb' + (i === selected ? ' active' : '');
     el.dataset.screen = i;
@@ -443,9 +436,14 @@ $('pvImg').addEventListener('load', () => {
   requestAnimationFrame(fitImage);
 });
 
-// ---- Pan & zoom viewers: wheel = zoom at cursor, drag = pan, double-click
-// = fit. The wheel is captured so the page never scrolls over a viewer. ----
-function makeViewer(vp, img) {
+// ---- Pan & zoom viewers: drag = pan, double-click = fit, and — where it is
+// switched on — wheel = zoom at the cursor. Wheel zoom has to swallow the
+// wheel event, which turns that pane into a hole the page cannot be scrolled
+// through. That is a fair trade for one small pane, but not for the big
+// side-by-side panel that spans the window: put the cursor anywhere in it on
+// the way down the page and scrolling silently zooms instead. So zoom is opt-in
+// per viewer, and only the preview beside the video keeps it. ----
+function makeViewer(vp, img, { wheelZoom = true } = {}) {
   const wrap = img.parentElement; // .zwrap: image + annotation boxes move as one
   const st = { s: 1, tx: 0, ty: 0, fit: 1 };
   const apply = () => wrap.style.transform = `translate(${st.tx}px, ${st.ty}px) scale(${st.s})`;
@@ -459,7 +457,7 @@ function makeViewer(vp, img) {
     st.ty = (vp.clientHeight - img.naturalHeight * st.s) / 2;
     apply();
   };
-  vp.addEventListener('wheel', e => {
+  if (wheelZoom) vp.addEventListener('wheel', e => {
     e.preventDefault();
     const r = vp.getBoundingClientRect();
     const mx = e.clientX - r.left, my = e.clientY - r.top;
@@ -483,9 +481,9 @@ function makeViewer(vp, img) {
   img.addEventListener('load', () => requestAnimationFrame(fit));
   return { fit };
 }
-const pvViewer = makeViewer($('pvViewport'), $('pvImg'));
-const dvFigma = makeViewer($('dvpFigma'), $('dFigma'));
-const dvVideo = makeViewer($('dvpVideo'), $('dVideo'));
+const pvViewer = makeViewer($('pvViewport'), $('pvImg'));                          // right of the video: keeps wheel zoom
+const dvFigma = makeViewer($('dvpFigma'), $('dFigma'), { wheelZoom: false });      // scroll past these instead
+const dvVideo = makeViewer($('dvpVideo'), $('dVideo'), { wheelZoom: false });
 function fitImage() { pvViewer.fit(); }
 
 // Red annotation boxes over the images, at the judge's coordinates (% of image).
@@ -848,7 +846,7 @@ function closeDetail() {
   document.body.classList.remove('detailopen');
   [...$('strip').children].forEach(el => el.classList.remove('active'));
   window._selectedScreen = null;
-  if (window._report?.video) placeThumbs(window._report);
+  $('track').querySelectorAll('.thumb').forEach(el => el.classList.remove('active'));
 }
 
 function stepDetail(delta) {
