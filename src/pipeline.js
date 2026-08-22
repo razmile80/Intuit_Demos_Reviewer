@@ -10,6 +10,22 @@ import { MODEL } from './compare/judge.js';
 import { addScriptVersion } from './scripts.js';
 import { transcribeVideo } from './transcribe.js';
 
+// A dismissal is a human overriding the AI's report — "I don't agree with
+// this pairing/verdict" — and it must stick until the human explicitly
+// restores it, no matter what verdict a later rescan produces. This matters
+// most for order violations specifically: they only ever land on a 'match'
+// screen (an order problem is about WHEN a screen appears, not whether it
+// looks right), so a dismissal aimed at silencing one has to survive a
+// 'match' verdict — restoring only non-'match' dismissals (the old rule)
+// wiped exactly that case on every rescan, and the order-broken status kept
+// coming back no matter how many times it was dismissed.
+export function restoreScreenDismissals(judged, dismissals) {
+  for (const j of judged) {
+    if (j.screen.name in dismissals) j.dismissed = true;
+  }
+  return judged;
+}
+
 export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, script, deep = false, runId, onProgress = () => {}, onScreen = () => {} }) {
   const triggeredAt = new Date().toISOString(); // scan/rescan trigger time, not completion
   const runDir = path.join('runs', runId);
@@ -72,12 +88,7 @@ export async function runPipeline({ figmaUrl, frameioUrl, videoPath, demoName, s
       timestamp: j.matchedFrame?.timestamp ?? null,
     }),
   });
-  // Restore prior dismissals for ANY non-matching verdict, not just not_found —
-  // otherwise a dismissed mismatch comes back on every rescan and keeps
-  // breaking the order check.
-  for (const j of judged) {
-    if (j.verdict !== 'match' && j.screen.name in dismissals) j.dismissed = true;
-  }
+  restoreScreenDismissals(judged, dismissals);
   const sequence = sequenceCheck(judged.filter(j => !j.dismissed && (j.verdict === 'match' || j.verdict === 'mismatch')));
   const extras = await dedupeExtras(findExtras(videoFrames, judged));
 

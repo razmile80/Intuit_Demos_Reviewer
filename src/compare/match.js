@@ -23,16 +23,66 @@ export async function matchScreens(figmaFrames, videoFrames, { topK = 3, minScor
 // legitimately land on the same beat), not a re-edited storyboard. Only a
 // meaningful jump backwards counts as a real order problem.
 export const ORDER_TOLERANCE = 3;
-export function sequenceCheck(judged, { tolerance = ORDER_TOLERANCE } = {}) {
-  const violations = [];
-  let prev = -Infinity;
-  for (const { screen, matchedFrame } of judged) {
-    if (!matchedFrame) continue;
-    if (matchedFrame.timestamp < prev - tolerance) {
-      violations.push({ screenName: screen.name, timestamp: matchedFrame.timestamp, prevTimestamp: prev });
+
+// Which screens are genuinely out of place, given the storyboard order they
+// come in and the video moment each one matched?
+//
+// The obvious scan — walk the list, remember the latest timestamp seen, flag
+// anything that goes backwards — blames the WRONG screens. One screen paired
+// to a much later moment drags the running maximum forward with it, so every
+// correctly-ordered screen that follows looks like a jump backwards: a single
+// bad pairing smears "out of order" across all its innocent neighbours, and
+// the producer is asked to dismiss screens that were never the problem while
+// the actual culprit sits there unflagged.
+//
+// So instead of a running maximum, find the longest run of screens that DO
+// read in order and treat only the screens left out of it as violations. One
+// displaced screen among twenty tidy ones then reports exactly one violation
+// — the displaced screen — instead of everything downstream of it.
+//
+// O(n²) over screens (tens per demo, so irrelevant). Note the tolerance
+// comparison is not transitive, which is why this is a longest-chain DP and
+// not a textbook longest-increasing-subsequence: what's guaranteed is that
+// each CONSECUTIVE pair in the chain reads in order, which is exactly what
+// "these screens play in storyboard order" means here.
+export function findOrderViolations(items, { tolerance = ORDER_TOLERANCE } = {}) {
+  const n = items.length;
+  if (n < 2) return [];
+  const readsInOrder = (prev, next) => next.timestamp >= prev.timestamp - tolerance;
+  const len = new Array(n).fill(1), parent = new Array(n).fill(-1);
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < i; j++) {
+      if (readsInOrder(items[j], items[i]) && len[j] + 1 > len[i]) { len[i] = len[j] + 1; parent[i] = j; }
     }
-    prev = Math.max(prev, matchedFrame.timestamp);
   }
+  // Anchor on the FIRST index achieving the longest run: when a two-screen
+  // demo jumps backwards, the second screen is the odd one out, not the first.
+  let end = 0;
+  for (let i = 1; i < n; i++) if (len[i] > len[end]) end = i;
+  const inOrder = new Set();
+  for (let i = end; i !== -1; i = parent[i]) inOrder.add(i);
+
+  const violations = [];
+  for (let i = 0; i < n; i++) {
+    if (inOrder.has(i)) continue;
+    // Report the last in-order screen before this one as what it should have
+    // followed — that's the pairing a producer compares it against.
+    let prev = -1;
+    for (let j = i - 1; j >= 0; j--) if (inOrder.has(j)) { prev = j; break; }
+    violations.push({
+      screenName: items[i].name,
+      timestamp: items[i].timestamp,
+      prevTimestamp: prev === -1 ? null : items[prev].timestamp,
+    });
+  }
+  return violations;
+}
+
+export function sequenceCheck(judged, opts) {
+  const items = judged
+    .filter(j => j.matchedFrame && j.matchedFrame.timestamp != null)
+    .map(j => ({ name: j.screen.name, timestamp: j.matchedFrame.timestamp }));
+  const violations = findOrderViolations(items, opts);
   return { ok: violations.length === 0, violations };
 }
 
