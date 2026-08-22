@@ -340,11 +340,21 @@ function thumbFiltered(sc) {
 // the thumb on the video timeline. Either view can start a selection (click a
 // column, or click a thumb while scrubbing), so this is the single place that
 // moves the highlight, and neither view has to know which one was clicked.
-function selectScreen(i) {
+function selectScreen(i, { scrollPage = true } = {}) {
   const prev = window._selectedScreen ?? null;
   window._selectedScreen = i;
   [...$('strip').children].forEach(el => el.classList.toggle('active', el.dataset.screen === String(i)));
-  $('strip').querySelector(`[data-screen="${i}"]`)?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  // Reveal the highlighted column — but a selection made DOWN on the video
+  // timeline must not yank the page back UP to the filmstrip. scrollIntoView
+  // walks every scrollable ancestor, so it moves the window too; when the pick
+  // came from the timeline, scroll the strip's own horizontal scroller instead
+  // and leave the page exactly where the reviewer left it.
+  const col = $('strip').querySelector(`[data-screen="${i}"]`);
+  if (col && scrollPage) col.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' });
+  else if (col) {
+    const strip = $('strip'), sr = strip.getBoundingClientRect(), cr = col.getBoundingClientRect();
+    strip.scrollTo({ left: strip.scrollLeft + (cr.left - sr.left) - (sr.width - cr.width) / 2, behavior: 'smooth' });
+  }
   if (!window._report?.video) return;
   const track = $('track');
   const target = track.querySelector(`.thumb[data-screen="${i}"]`);
@@ -398,8 +408,8 @@ function placeThumbs(r) {
         // Mirror the pick back up into the filmstrip. When the detail panel is
         // open, move IT to this screen too — otherwise the panel would sit on
         // one screen while the highlight points at another.
-        if (document.body.classList.contains('detailopen')) detail(i);
-        else selectScreen(i);
+        if (document.body.classList.contains('detailopen')) detail(i, { scrollPage: false });
+        else selectScreen(i, { scrollPage: false });
         return;
       }
       const x = Math.min(Math.max(e.clientX - rect.left, 0), rect.width);
@@ -811,7 +821,7 @@ $('voSave').onclick = async () => {
   if (!r.error && !r.unchanged) $('voMeta').textContent = `v${r.version} · just now`;
 };
 
-function detail(i) {
+function detail(i, opts) {
   const sc = window._report.screens[i];
   $('dFigma').src = sc.figmaPng;
   $('dvpVideo').style.display = sc.videoPng ? '' : 'none';
@@ -826,7 +836,7 @@ function detail(i) {
   $('detail').style.display = 'block';
   document.body.classList.add('detailopen');
   // Highlight the open column, keep it in view, mirror onto the timeline.
-  selectScreen(i);
+  selectScreen(i, opts);
   $('prevBtn').disabled = i <= 0;
   $('nextBtn').disabled = i >= window._report.screens.length - 1;
   $('detailPos').textContent = `${i + 1} / ${window._report.screens.length}`;
