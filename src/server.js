@@ -6,6 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runPipeline } from './pipeline.js';
+import { findOrderViolations } from './compare/match.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const app = express();
@@ -55,7 +56,15 @@ app.get('/api/health', (req, res) => {
 app.get('/api/report/:runId', async (req, res) => {
   try {
     const safe = req.params.runId.replace(/[^a-z0-9-]/gi, '');
-    res.json(JSON.parse(await fs.readFile(path.join('runs', safe, 'report.json'), 'utf8')));
+    const report = JSON.parse(await fs.readFile(path.join('runs', safe, 'report.json'), 'utf8'));
+    // Every summary number (and the order check) is derived from screens and
+    // extras, so recompute on read rather than trusting whatever the scan that
+    // produced this file happened to write. Otherwise a fix to the order logic
+    // only reaches a demo once someone rescans it — 25 demos' worth of stale
+    // verdicts sitting in old report.json files, each disagreeing with the
+    // live code. Derived data, cheap to redo, so redo it.
+    if (report.summary && !report.summary.live) recount(report);
+    res.json(report);
   } catch {
     res.status(404).json({ error: 'Report not found' });
   }
@@ -184,19 +193,41 @@ app.post('/api/import-batch', (req, res) => {
 
 // Delete demos entirely: all their runs plus per-demo memory (scripts,
 // anchors, dismissals). Refuses while any scan is running.
+// Only the demos being scanned RIGHT NOW are off limits — not the whole table.
+// A finished run is inert, so deleting one while some OTHER demo scans touches
+// nothing that scan is using. (The loop below couldn't delete an in-flight run
+// even if asked: a run has no report.json until it finishes, so it falls into
+// the catch and is left alone.) The demo actually being scanned is excluded for
+// a different reason — deleting it wouldn't stick, because its scan writes a
+// fresh run on completion and the demo reappears in the table minutes later.
+export function scanningDemoNames(batchList, active) {
+  return new Set([
+    ...batchList.filter(b => b.state === 'running').map(b => b.demoName),
+    ...[...active.values()].map(a => a.demoName),
+  ].filter(Boolean)); // an ad-hoc compare has no demo name and blocks nothing
+}
+
 app.post('/api/delete-demos', async (req, res) => {
   const names = new Set(req.body?.names ?? []);
   if (!names.size) return res.status(400).json({ error: 'No demos selected' });
-  if (batch.some(b => b.state === 'queued' || b.state === 'running') || activeRuns.size) {
-    return res.status(409).json({ error: 'Wait for running scans to finish before deleting' });
+
+  const scanning = scanningDemoNames(batch, activeRuns);
+  const skipped = [...names].filter(n => scanning.has(n));
+  const doomed = new Set([...names].filter(n => !scanning.has(n)));
+  if (!doomed.size) {
+    return res.status(409).json({
+      error: `Still scanning: ${skipped.join(', ')} — deleting now wouldn't stick, because the scan writes a new report when it finishes. Wait for ${skipped.length > 1 ? 'those scans' : 'that scan'}.`,
+      skipped,
+    });
   }
+
   let deletedRuns = 0;
   try {
     for (const id of await fs.readdir('runs')) {
       if (id === 'uploads') continue;
       try {
         const r = JSON.parse(await fs.readFile(path.join('runs', id, 'report.json'), 'utf8'));
-        if (names.has(r.name)) {
+        if (doomed.has(r.name)) {
           await fs.rm(path.join('runs', id), { recursive: true, force: true });
           deletedRuns++;
         }
@@ -208,12 +239,17 @@ app.post('/api/delete-demos', async (req, res) => {
       const p = path.join('data', file);
       const obj = JSON.parse(await fs.readFile(p, 'utf8'));
       let changed = false;
-      for (const n of names) if (n in obj) { delete obj[n]; changed = true; }
+      for (const n of doomed) if (n in obj) { delete obj[n]; changed = true; }
       if (changed) await fs.writeFile(p, JSON.stringify(obj, null, 2));
     } catch { /* file absent */ }
   }
-  for (let i = batch.length - 1; i >= 0; i--) if (names.has(batch[i].demoName)) batch.splice(i, 1);
-  res.json({ ok: true, deletedRuns });
+  // Drop QUEUED work for the deleted demos so it can't resurrect them. Running
+  // items stay: splicing one frees a concurrency slot while its pipeline is
+  // still going, which would let pumpBatch start more scans than CONCURRENCY.
+  for (let i = batch.length - 1; i >= 0; i--) {
+    if (doomed.has(batch[i].demoName) && batch[i].state !== 'running') batch.splice(i, 1);
+  }
+  res.json({ ok: true, deletedRuns, deleted: [...doomed], skipped });
 });
 
 app.get('/api/batch', (req, res) => {
@@ -243,7 +279,7 @@ app.post('/api/dismiss', async (req, res) => {
     await fs.mkdir('data', { recursive: true });
     await fs.writeFile(path.join('data', 'dismissals.json'), JSON.stringify(dismissals, null, 2));
 
-    res.json({ ok: true, screen: entry, summary: report.summary });
+    res.json({ ok: true, screen: entry, summary: report.summary, sequence: report.sequence });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -286,7 +322,7 @@ app.post('/api/note', async (req, res) => {
     applyNotes(entry, perDemo[key] ?? []);
     recount(report);
     await fs.writeFile(file, JSON.stringify(report, null, 2));
-    res.json({ ok: true, screen: entry, summary: report.summary });
+    res.json({ ok: true, screen: entry, summary: report.summary, sequence: report.sequence });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -310,16 +346,21 @@ export function recount(report) {
   report.summary.missing = s.filter(x => x.verdict === 'not_found' && !x.dismissed).length;
   report.summary.flagged = s.filter(x => x.flagged).length;
   report.summary.extras = (report.extras ?? []).filter(x => !x.dismissed).length;
-  // Order is judged on the screens still in play: a dismissed screen sitting
-  // at an odd timestamp shouldn't keep flagging the demo as out of order.
-  let prev = -Infinity, ok = true;
-  const TOLERANCE = 3; // seconds — matches sequenceCheck in compare/match.js
-  for (const x of s) {
-    if (x.dismissed || x.timestamp == null) continue;
-    if (x.timestamp < prev - TOLERANCE) { ok = false; break; }
-    prev = Math.max(prev, x.timestamp);
-  }
-  report.summary.orderOk = ok;
+  // Order is judged on the screens still in play: a dismissed screen is a
+  // human override — "I don't agree with this pairing" — and must be fully
+  // excluded from the order check, not just from the summary counts. This is
+  // also the single source of truth for report.sequence.violations (not just
+  // the orderOk boolean), so dismissing the one screen causing a violation
+  // clears it immediately instead of leaving a stale violations list from
+  // the last scan around for the filmstrip to keep highlighting.
+  //
+  // Shares findOrderViolations with the scan-time check so the two can't
+  // disagree about what "out of order" means — they did drift before.
+  const violations = findOrderViolations(
+    s.filter(x => !x.dismissed && x.timestamp != null).map(x => ({ name: x.name, timestamp: x.timestamp })),
+  );
+  report.summary.orderOk = violations.length === 0;
+  report.sequence = { ok: violations.length === 0, violations };
 }
 
 // Merge a screen's manual notes into its differences (they always win over
@@ -398,7 +439,7 @@ app.post('/api/dismiss-extra', async (req, res) => {
     // truth for summary.extras, and a bare field patch here is exactly how
     // this handler quietly drifted out of sync with the other two before.
     await fs.writeFile(file, JSON.stringify(report, null, 2));
-    res.json({ ok: true, summary: report.summary, dismissed: ex.dismissed });
+    res.json({ ok: true, summary: report.summary, sequence: report.sequence, dismissed: ex.dismissed });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -440,9 +481,11 @@ app.post('/api/rejudge', async (req, res) => {
       videoPng: '/' + cropped.split(path.sep).join('/'),
       anchored: true,
     });
-    report.summary.match = report.screens.filter(s => s.verdict === 'match').length;
-    report.summary.mismatch = report.screens.filter(s => s.verdict === 'mismatch').length;
-    report.summary.missing = report.screens.filter(s => s.verdict === 'not_found').length;
+    // Re-anchoring changes this screen's timestamp — the order check's only
+    // input — so recount instead of hand-patching three counts and leaving
+    // orderOk/sequence stale (and these hand-rolled filters also forgot
+    // `dismissed`, double-counting screens the producer had already waved off).
+    recount(report);
     await fs.writeFile(file, JSON.stringify(report, null, 2));
 
     // Persist the anchor per demo so future rescans start from it.
@@ -452,7 +495,7 @@ app.post('/api/rejudge', async (req, res) => {
     await fs.mkdir('data', { recursive: true });
     await fs.writeFile(path.join('data', 'anchors.json'), JSON.stringify(anchors, null, 2));
 
-    res.json({ ok: true, screen: entry, summary: report.summary });
+    res.json({ ok: true, screen: entry, summary: report.summary, sequence: report.sequence });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -479,6 +522,7 @@ app.get('/project', (req, res) => {
 const upload = multer({ dest: 'runs/uploads/' });
 const channels = new Map(); // runId -> Set<res>
 const activeRuns = new Map(); // runId -> { demoName, startedAt } — survives page reloads
+export { activeRuns as activeRunsForTest }; // lets tests stage a live scan without running a pipeline
 
 function emit(runId, event, data) {
   for (const res of channels.get(runId) ?? []) {

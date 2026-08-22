@@ -240,7 +240,16 @@ async function deleteSelected() {
   if (typed !== 'DELETE') return;
   const r = await fetch('/api/delete-demos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ names }) }).then(r => r.json());
   if (r.error) return alert(r.error);
-  selected.clear();
+  // A delete can now partly succeed: demos being scanned right now are left
+  // alone (deleting them wouldn't stick), the rest are gone. Say which, and
+  // keep the skipped ones ticked so they can be retried once the scan ends.
+  if (r.skipped?.length) {
+    alert(`Deleted ${r.deleted.length} demo${r.deleted.length === 1 ? '' : 's'}.\n\nStill scanning, so left in place:\n${r.skipped.join('\n')}`);
+    selected.clear();
+    r.skipped.forEach(n => selected.add(n));
+  } else {
+    selected.clear();
+  }
   updateSelButton();
   loadRuns();
 }
